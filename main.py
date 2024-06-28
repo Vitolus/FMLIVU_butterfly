@@ -1,35 +1,90 @@
 import torch
+from torch import nn
+from torch.utils.data import DataLoader
+from torchvision import datasets
+from torchvision.transforms import ToTensor, Lambda
+
+
+class NeuralNetwork(nn.Module):
+    def __init__(self):
+        super(NeuralNetwork, self).__init__()
+        self.flatten = nn.Flatten()
+        self.linear_relu_stack = nn.Sequential(
+            nn.Linear(28 * 28, 512),
+            nn.ReLU(),
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, 10),
+            nn.ReLU()
+        )
+
+    def forward(self, x):
+        x = self.flatten(x)
+        logits = self.linear_relu_stack(x)
+        return logits
+
+
+def train_loop(dataloader, model, loss_fn, optimizer):
+    size = len(dataloader.dataset)
+    for batch, (X, y) in enumerate(dataloader):
+        # Compute prediction and loss
+        pred = model(X)
+        loss = loss_fn(pred, y)
+
+        # Backpropagation
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        if batch % 100 == 0:
+            loss, current = loss.item(), batch * len(X)
+            print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
+
+
+def test_loop(dataloader, model, loss_fn):
+    size = len(dataloader.dataset)
+    test_loss, correct = 0, 0
+
+    with torch.no_grad():
+        for X, y in dataloader:
+            pred = model(X)
+            test_loss += loss_fn(pred, y).item()
+            correct += (pred.argmax(1) == y).type(torch.float).sum().item()
+
+    test_loss /= size
+    correct /= size
+    print(f"Test Error: \n Accuracy: {(100 * correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
 
 
 if __name__ == '__main__':
-    x = torch.ones(5)  # input tensor
-    y = torch.zeros(3)  # expected output
-    w = torch.randn(5, 3, requires_grad=True)
-    b = torch.randn(3, requires_grad=True)
-    z = torch.matmul(x, w) + b
-    loss = torch.nn.functional.binary_cross_entropy_with_logits(z, y)
-    print('Gradient function for z =', z.grad_fn)
-    print('Gradient function for loss =', loss.grad_fn)
-    loss.backward()
-    print(w.grad)
-    print(b.grad)
+    # device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    # print(f'Using {device} device')
+    training_data = datasets.FashionMNIST(
+        root="data",
+        train=True,
+        download=True,
+        transform=ToTensor()
+    )
+    test_data = datasets.FashionMNIST(
+        root="data",
+        train=False,
+        download=True,
+        transform=ToTensor()
+    )
+    train_dataloader = DataLoader(training_data, batch_size=64)
+    test_dataloader = DataLoader(test_data, batch_size=64)
+    model = NeuralNetwork()  # .to(device)
+    learning_rate = 1e-3
+    batch_size = 64
+    epochs = 10
+    # Initialize the loss function
+    loss_fn = nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+    for t in range(epochs):
+        print(f"Epoch {t+1}\n-------------------------------")
+        train_loop(train_dataloader, model, loss_fn, optimizer)
+        test_loop(test_dataloader, model, loss_fn)
+    print("Done!")
 
-    print(z.requires_grad)
-    with torch.no_grad():
-        z = torch.matmul(x, w) + b
-    print(z.requires_grad)
-
-    z = torch.matmul(x, w) + b
-    z_det = z.detach()
-    print(z_det.requires_grad)
-
-    inp = torch.eye(5, requires_grad=True)
-    out = (inp + 1).pow(2)
-    out.backward(torch.ones_like(inp), retain_graph=True)
-    print("First call\n", inp.grad)
-    out.backward(torch.ones_like(inp), retain_graph=True)
-    print("\nSecond call\n", inp.grad)
-    inp.grad.zero_()
-    out.backward(torch.ones_like(inp), retain_graph=True)
-    print("\nCall after zeroing gradients\n", inp.grad)
-
+    torch.save(model.state_dict(), "data/model.pth")
+    print("Saved PyTorch Model State to model.pth")
