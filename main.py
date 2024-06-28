@@ -1,44 +1,35 @@
-import os
 import torch
-from torch import nn
-from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
-
-
-class NeuralNetwork(nn.Module):
-    def __init__(self):
-        super(NeuralNetwork, self).__init__()
-        self.flatten = nn.Flatten()
-        self.linear_relu_stack = nn.Sequential(
-            nn.Linear(28 * 28, 512),  # input layer
-            nn.ReLU(),
-            nn.Linear(512, 512),  # hidden layer
-            nn.ReLU(),
-            nn.Linear(512, 10),  # output layer
-            nn.ReLU()
-        )
-
-    def forward(self, x):
-        x = self.flatten(x)
-        logits = self.linear_relu_stack(x)
-        return logits
 
 
 if __name__ == '__main__':
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f'Using {device} device')
+    x = torch.ones(5)  # input tensor
+    y = torch.zeros(3)  # expected output
+    w = torch.randn(5, 3, requires_grad=True)
+    b = torch.randn(3, requires_grad=True)
+    z = torch.matmul(x, w) + b
+    loss = torch.nn.functional.binary_cross_entropy_with_logits(z, y)
+    print('Gradient function for z =', z.grad_fn)
+    print('Gradient function for loss =', loss.grad_fn)
+    loss.backward()
+    print(w.grad)
+    print(b.grad)
 
-    model = NeuralNetwork().to(device)
-    print(model)
+    print(z.requires_grad)
+    with torch.no_grad():
+        z = torch.matmul(x, w) + b
+    print(z.requires_grad)
 
-    X = torch.rand(1, 28, 28, device=device)
-    logits = model(X)
-    pred_probab = nn.Softmax(dim=1)(logits)
-    y_pred = pred_probab.argmax(1)
-    print(f"Predicted class: {y_pred}")
+    z = torch.matmul(x, w) + b
+    z_det = z.detach()
+    print(z_det.requires_grad)
 
-    print(f"First Linear weights: {model.linear_relu_stack[0].weight} \n")
-    print(f"First Linear biases: {model.linear_relu_stack[0].bias} \n")
+    inp = torch.eye(5, requires_grad=True)
+    out = (inp + 1).pow(2)
+    out.backward(torch.ones_like(inp), retain_graph=True)
+    print("First call\n", inp.grad)
+    out.backward(torch.ones_like(inp), retain_graph=True)
+    print("\nSecond call\n", inp.grad)
+    inp.grad.zero_()
+    out.backward(torch.ones_like(inp), retain_graph=True)
+    print("\nCall after zeroing gradients\n", inp.grad)
 
-    for name, param in model.named_parameters():
-        print(f"Layer: {name} | Size: {param.size()} | Values : {param[:2]} \n")
