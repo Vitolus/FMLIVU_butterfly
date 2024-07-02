@@ -22,6 +22,18 @@ test_loader = torch.utils.data.DataLoader(data_test, batch_size=batch_size)
 
 
 #%%
+def plot_results(hist):
+    plt.figure(figsize=(15, 5))
+    plt.subplot(121)
+    plt.plot(hist['train_acc'], label='Training acc')
+    plt.plot(hist['val_acc'], label='Validation acc')
+    plt.legend()
+    plt.subplot(122)
+    plt.plot(hist['train_loss'], label='Training loss')
+    plt.plot(hist['val_loss'], label='Validation loss')
+    plt.legend()
+
+
 def train_epoch(net, dataloader, lr=0.01, optimizer=None, loss_fn=nn.NLLLoss()):
     optimizer = optimizer or torch.optim.Adam(net.parameters(), lr=lr)
     net.train()
@@ -60,7 +72,7 @@ def train(net, train_loader, test_loader, optimizer=None, lr=0.01, epochs=10, lo
     for ep in range(epochs):
         tl, ta = train_epoch(net, train_loader, optimizer=optimizer, lr=lr, loss_fn=loss_fn)
         vl, va = validate(net, test_loader, loss_fn=loss_fn)
-        print(f"Epoch {ep+1:2}, Train acc={ta:.3f}, Val acc={va:.3f}, Train loss={tl:.3f}, Val loss={vl:.3f}")
+        print(f"Epoch {ep + 1:2}, Train acc={ta:.3f}, Val acc={va:.3f}, Train loss={tl:.3f}, Val loss={vl:.3f}")
         res['train_loss'].append(tl)
         res['train_acc'].append(ta)
         res['val_loss'].append(vl)
@@ -69,36 +81,26 @@ def train(net, train_loader, test_loader, optimizer=None, lr=0.01, epochs=10, lo
 
 
 #%%
-class OneConv(nn.Module):
+class MultiLayerCNN(nn.Module):
     def __init__(self):
-        super(OneConv, self).__init__()
-        self.conv = nn.Conv2d(1, 9, kernel_size=(5, 5))
+        super(MultiLayerCNN, self).__init__()
+        self.conv1 = nn.Conv2d(1, 10, 5)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(10, 20, 5)
         self.flatten = nn.Flatten()
-        self.fc = nn.Linear(9 * 24 * 24, 10)
+        self.fc = nn.Linear(320, 10)
 
     def forward(self, x):
-        x = nn.functional.relu(self.conv(x))
+        x = self.pool(nn.functional.relu(self.conv1(x)))
+        x = self.pool(nn.functional.relu(self.conv2(x)))
+        # x = x.view(-1, 320) instead of flatten
         x = self.flatten(x)
         x = nn.functional.log_softmax(self.fc(x), dim=1)
         return x
 
 
-net = OneConv().to(device)
-summary(net, (1, 1, 28, 28))
-
-
-#%%
-def plot_results(hist):
-    plt.figure(figsize=(15, 5))
-    plt.subplot(121)
-    plt.plot(hist['train_acc'], label='Training acc')
-    plt.plot(hist['val_acc'], label='Validation acc')
-    plt.legend()
-    plt.subplot(122)
-    plt.plot(hist['train_loss'], label='Training loss')
-    plt.plot(hist['val_loss'], label='Validation loss')
-    plt.legend()
-
+net = MultiLayerCNN()
+summary(net, input_size=(1, 1, 28, 28))
 
 #%%
 hist = train(net, train_loader, test_loader, epochs=n_epochs, lr=lr)
@@ -108,6 +110,6 @@ plot_results(hist)
 fig, ax = plt.subplots(1, 9)
 with torch.no_grad():
     p = next(net.conv.parameters())
-    for i,x in enumerate(p):
+    for i, x in enumerate(p):
         ax[i].imshow(x.detach().cpu()[0, ...])
         ax[i].axis('off')
