@@ -116,10 +116,10 @@ if __name__ == '__main__':
         test(test_dataloader, model)
     print("Done!")
 
-    torch.save(model.state_dict(), "data/model.pth")
+    torch.save(model.state_dict(), "../data/model.pth")
     print("Saved PyTorch Model State to model.pth")
     model = NeuralNetwork()
-    model.load_state_dict(torch.load("data/model.pth"))
+    model.load_state_dict(torch.load("../data/model.pth"))
     classes = [
         "T-shirt/top",
         "Trouser",

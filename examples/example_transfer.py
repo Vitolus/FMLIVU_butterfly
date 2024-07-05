@@ -43,7 +43,7 @@ trans = transforms.Compose([
 dataset = torchvision.datasets.ImageFolder('data/PetImages', transform=trans)
 trainset, testset = torch.utils.data.random_split(dataset, [20000, len(dataset) - 20000])
 #%%
-file_path = 'models/vgg16-397923af.pth'
+file_path = '../models/vgg16-397923af.pth'
 vgg = torchvision.models.vgg16()
 vgg.load_state_dict(torch.load(file_path))
 vgg.eval()
@@ -183,9 +183,9 @@ train_loader = torch.utils.data.DataLoader(trainset, batch_size=16)
 test_loader = torch.utils.data.DataLoader(testset, batch_size=16)
 train_long(vgg, train_loader, test_loader, loss_fn=torch.nn.CrossEntropyLoss(), epochs=1, print_freq=90)
 #%%
-torch.save(vgg,'data/cats_dogs.pth')
+torch.save(vgg, '../data/cats_dogs.pth')
 #%%
-vgg = torch.load('data/cats_dogs.pth')
+vgg = torch.load('../data/cats_dogs.pth')
 for x in vgg.features.parameters():
     x.requires_grad = True
 train_long(vgg,train_loader,test_loader,loss_fn=torch.nn.CrossEntropyLoss(),epochs=1,print_freq=90,lr=0.0001)

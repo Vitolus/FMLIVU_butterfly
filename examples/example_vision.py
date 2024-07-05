@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 from torchinfo import summary
 
 #%%
-data_train = torchvision.datasets.MNIST('./data', train=True, download=True, transform=ToTensor())
-data_test = torchvision.datasets.MNIST('./data', train=False, download=True, transform=ToTensor())
+data_train = torchvision.datasets.MNIST('../data', train=True, download=True, transform=ToTensor())
+data_test = torchvision.datasets.MNIST('../data', train=False, download=True, transform=ToTensor())
 # if using own dataset, use OpenCV library to load images and convert them to tensors using ToTensor() (which scales the image to [0, 1])
 # better to use torchvision.datasets.ImageFolder() for custom datasets (which performs all preprocessing)
 #%%

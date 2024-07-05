@@ -86,5 +86,5 @@ if __name__ == '__main__':
         test_loop(test_dataloader, model, loss_fn)
     print("Done!")
 
-    torch.save(model.state_dict(), "data/model.pth")
+    torch.save(model.state_dict(), "../data/model.pth")
     print("Saved PyTorch Model State to model.pth")

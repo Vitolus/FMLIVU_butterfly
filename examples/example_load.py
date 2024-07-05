@@ -28,7 +28,7 @@ class NeuralNetwork(nn.Module):
 
 if __name__ == '__main__':
     model = NeuralNetwork()
-    model.load_state_dict(torch.load("data/model.pth"))
+    model.load_state_dict(torch.load("../data/model.pth"))
     model.eval()
     input_image = torch.zeros((1, 28, 28))
     onnx_model = 'data/model.onnx'
