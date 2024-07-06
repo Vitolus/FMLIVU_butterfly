@@ -1,4 +1,4 @@
-#%%
+#%% import libraries
 import os
 import cv2
 from atom import ATOMClassifier
@@ -14,34 +14,37 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-#%%
-# building the dataset
+#%% building the dataset
 data = []
 labels = []
-path = '../data/images'
+path = 'data/images'
 folder = os.listdir(path)
 for file in folder:
-    label = int(file[:3])
-    img = cv2.imread(os.path.join(path, file), cv2.IMREAD_COLOR)
+    img = cv2.imread(os.path.join(path, file))
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     img = cv2.resize(img, (224, 224))
     data.append(img)
-    labels.append(label)
+    labels.append(int(file[:3]) - 1)
 
-dict_1 = {1: 'Danaus_plexippus',
-          2: 'Heliconius_charitonius',
-          3: 'Heliconius_erato',
-          4: 'Junonia_coenia',
-          5: 'Lycaena_phlaeas',
-          6: 'Nymphalis_antiopa',
-          7: 'Papilio_cresphontes',
-          8: 'Pieris_rapae',
-          9: 'Vanessa_atalanta',
-          10: 'Vanessa_cardui'}
-list_labels = []
-for i in labels:
-    list_labels.append(dict_1[i])
-
-#display amount of images per class
-df = pd.DataFrame(list_labels, columns=['labels'])
-df['labels'].value_counts().plot(kind='bar', colormap='viridis')
-plt.show()
+label_dict = {0: 'Danaus plexippus',
+              1: 'Heliconius charitonius',
+              2: 'Heliconius erato',
+              3: 'Junonia coenia',
+              4: 'Lycaena phlaeas',
+              5: 'Nymphalis antiopa',
+              6: 'Papilio cresphontes',
+              7: 'Pieris rapae',
+              8: 'Vanessa atalanta',
+              9: 'Vanessa cardui'}
+data = np.array(data) / 255.0
+labels = np.array(labels)
+flatten_data = data.reshape(len(data), -1)
+categorical_labels = F.one_hot(torch.tensor(labels, requires_grad=False), num_classes=10).numpy()
+#%% Data cleaning
+atom = ATOMClassifier(flatten_data, categorical_labels,
+                      test_size=0.2,
+                      n_jobs=-1,
+                      device=('gpu' if device == 'cuda' else 'cpu'),
+                      engine='cuml',
+                      verbose=2,
+                      random_state=1)
