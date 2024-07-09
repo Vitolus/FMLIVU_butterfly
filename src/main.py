@@ -48,3 +48,4 @@ atom = ATOMClassifier(flatten_data, categorical_labels,
                       engine='cuml',
                       verbose=2,
                       random_state=1)
+
