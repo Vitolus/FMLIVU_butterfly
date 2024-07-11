@@ -1,7 +1,9 @@
 #%% import libraries
 import os
 import cv2
-from atom import ATOMClassifier
+import atom
+import atom.data_cleaning as dc
+import atom.feature_engineering as fe
 import torch
 from torch import nn, optim
 import torch.nn.functional as F
@@ -14,13 +16,14 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+print("Using device: ", device)
 #%% building the dataset
 data = []
 labels = []
 path = 'data/images'
 folder = os.listdir(path)
 for file in folder:
-    img = cv2.imread(os.path.join(path, file))
+    img = cv2.imread(str(os.path.join(path, file)))
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     img = cv2.resize(img, (224, 224))
     data.append(img)
@@ -37,15 +40,45 @@ label_dict = {0: 'Danaus plexippus',
               8: 'Vanessa atalanta',
               9: 'Vanessa cardui'}
 data = np.array(data) / 255.0
+data = data.reshape(len(data), -1)
 labels = np.array(labels)
-flatten_data = data.reshape(len(data), -1)
-categorical_labels = F.one_hot(torch.tensor(labels, requires_grad=False), num_classes=10).numpy()
+labels = np.array(labels).reshape(-1, 1)
+# categorical_labels = F.one_hot(torch.tensor(labels, requires_grad=False), num_classes=10).numpy()
+#%% revert flatten data
+data = data.reshape(len(data), 224, 224, 3)
+#%%
+print(data.shape, labels.shape)
+print(data)
+print(labels)
+#%%
+clf = atom.ATOMClassifier(data, y=labels,
+                          test_size=0.2,
+                          device='cpu',
+                          engine='sklearn',
+                          n_jobs=-1,
+                          verbose=2,
+                          random_state=1)
 #%% Data cleaning
-atom = ATOMClassifier(flatten_data, categorical_labels,
-                      test_size=0.2,
-                      n_jobs=-1,
-                      device=('gpu' if device == 'cuda' else 'cpu'),
-                      engine='cuml',
-                      verbose=2,
-                      random_state=1)
-
+data, labels = (dc.Cleaner(convert_dtypes=True, # Convert the column's data types to the best possible types
+                     drop_duplicates=True, # Whether to drop duplicate rows.
+                     encode_target=False, # Whether to encode the target column(s). This includes converting categorical columns to numerical, and binarizing multilabel columns.
+                     device='cpu',
+                     engine='sklearn',
+                     verbose=2)
+                .fit_transform(data, labels))
+#%%
+data, labels = (dc.Pruner(strategy=['lof', 'iforest'],
+                   device='cpu',
+                   engine='sklearn',
+                   verbose=2,
+                   iforest={'contamination': 0.1, 'bootstrap': True, 'n_jobs': -1, 'random_state': 1},
+                   lof={'n_neighbors': 20, 'contamination': 0.1, 'n_jobs': -1}
+                   )
+          .fit_transform(data, labels))
+#%%
+# TODO: FIX THIS
+balancer = dc.Balancer(strategy='ADASYN',
+                       n_jobs=-1,
+                       verbose=2,
+                       random_state=1)
+data, labels = balancer.fit_transform(data, labels)
