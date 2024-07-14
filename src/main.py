@@ -55,30 +55,26 @@ clf = atom.ATOMClassifier(data, y=labels,
                           test_size=0.2,
                           device='cpu',
                           engine='sklearn',
-                          n_jobs=-1,
-                          verbose=2,
-                          random_state=1)
+                          n_jobs=-1, verbose=2, random_state=1)
 #%% Data cleaning
-data, labels = (dc.Cleaner(convert_dtypes=True, # Convert the column's data types to the best possible types
-                     drop_duplicates=True, # Whether to drop duplicate rows.
-                     encode_target=False, # Whether to encode the target column(s). This includes converting categorical columns to numerical, and binarizing multilabel columns.
-                     device='cpu',
-                     engine='sklearn',
-                     verbose=2)
+data, labels = (dc.Pruner(strategy=['lof', 'iforest'],
+                          device='cpu',
+                          engine='sklearn',
+                          verbose=2,
+                          iforest={'n_estimators': 100,
+                                   'contamination': 'auto',
+                                   'bootstrap': True,
+                                   'n_jobs': -1, 'verbose': 2, 'random_state': 1},
+                          lof={'n_neighbors': 20,
+                               'metric': 'minkowski',
+                               'contamination': 'auto',
+                               'n_jobs': -1}
+                          )
                 .fit_transform(data, labels))
 #%%
-data, labels = (dc.Pruner(strategy=['lof', 'iforest'],
-                   device='cpu',
-                   engine='sklearn',
-                   verbose=2,
-                   iforest={'contamination': 0.1, 'bootstrap': True, 'n_jobs': -1, 'random_state': 1},
-                   lof={'n_neighbors': 20, 'contamination': 0.1, 'n_jobs': -1}
-                   )
-          .fit_transform(data, labels))
-#%%
-# TODO: FIX THIS
-balancer = dc.Balancer(strategy='ADASYN',
-                       n_jobs=-1,
-                       verbose=2,
-                       random_state=1)
-data, labels = balancer.fit_transform(data, labels)
+# TODO: AFTER DIVISION BETWEEN TRAIN AND VALIDATION
+strats = ['ADASYN','BorderlineSMOTE','SVMSMOTE','KMeansSmote']
+data, labels = (dc.Balancer(strategy=strats[0],
+                            n_jobs=-1,verbose=2,random_state=1,
+                            )
+                .fit_transform(data, labels))
