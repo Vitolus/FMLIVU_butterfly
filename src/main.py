@@ -43,9 +43,9 @@ data = np.array(data) / 255.0
 data = data.reshape(len(data), -1)
 labels = np.array(labels)
 labels = np.array(labels).reshape(-1, 1)
-# categorical_labels = F.one_hot(torch.tensor(labels, requires_grad=False), num_classes=10).numpy()
-#%% revert flatten data
+#%% revert flatten data and make labels categorical
 data = data.reshape(len(data), 224, 224, 3)
+cat_labels = F.one_hot(torch.tensor(labels, requires_grad=False), num_classes=10).numpy()
 #%%
 print(data.shape, labels.shape)
 print(data)
@@ -72,7 +72,7 @@ data, labels = (dc.Pruner(strategy=['lof', 'iforest'],
                           )
                 .fit_transform(data, labels))
 #%%
-# TODO: AFTER DIVISION BETWEEN TRAIN AND VALIDATION
+# TODO: AFTER DIVISION BETWEEN TRAIN AND VALIDATION. TRY DIFFERENT STRATS TO DETERMINE THE BEST ONE
 strats = ['ADASYN','BorderlineSMOTE','SVMSMOTE','KMeansSmote']
 data, labels = (dc.Balancer(strategy=strats[0],
                             n_jobs=-1,verbose=2,random_state=1,
