@@ -58,7 +58,7 @@ class MyDataset(torch.utils.data.Dataset):
         data = Image.fromarray(data, mode='RGB')
         if self.transform:
             data = self.transform(data)
-        labels = torch.tensor(self.labels[idx], dtype=torch.long)
+        labels = torch.tensor(self.labels[idx], requires_grad=False, dtype=torch.long)
         return data, labels
 #%%
 trans = transforms.Compose([
@@ -109,6 +109,11 @@ data, labels = (dc.Pruner(strategy=['lof', 'iforest'],
 data = data.values.reshape(-1, pixels_per_side, pixels_per_side, 3)
 labels = labels.values
 cat_labels = F.one_hot(torch.tensor(labels, requires_grad=False), num_classes=10).numpy()
+#%%
+
+
+
+
 #%%
 # TODO: AFTER DIVISION BETWEEN TRAIN AND VALIDATION. TRY DIFFERENT STRATS TO DETERMINE THE BEST ONE
 strats = ['ADASYN','BorderlineSMOTE','SVMSMOTE','KMeansSmote']
