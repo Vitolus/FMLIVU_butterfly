@@ -10,7 +10,7 @@ from torch import nn, optim
 import torch.nn.functional as F
 import torchvision
 from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split
 from torchinfo import summary
 import numpy as np
 import pandas as pd
@@ -32,7 +32,7 @@ for file in folder:
     labels.append(int(file[:3]) - 1)
 labels = np.array(labels)
 #labels = labels.reshape(-1, 1)
-label_dict = {0: 'Danaus plexippus',
+classes = {0: 'Danaus plexippus',
               1: 'Heliconius charitonius',
               2: 'Heliconius erato',
               3: 'Junonia coenia',
@@ -42,7 +42,7 @@ label_dict = {0: 'Danaus plexippus',
               7: 'Pieris rapae',
               8: 'Vanessa atalanta',
               9: 'Vanessa cardui'}
-print([label_dict[labels[i]] for i in range(10)])
+print([classes[labels[i]] for i in range(10)])
 #%%
 class MyDataset(torch.utils.data.Dataset):
     def __init__(self, data, labels, transform=None):
@@ -58,7 +58,7 @@ class MyDataset(torch.utils.data.Dataset):
         data = Image.fromarray(data, mode='RGB')
         if self.transform:
             data = self.transform(data)
-        labels = torch.tensor(self.labels[idx], requires_grad=False, dtype=torch.long)
+        labels = torch.tensor(self.labels[idx])
         return data, labels
 #%%
 trans = transforms.Compose([
@@ -110,12 +110,39 @@ data = data.values.reshape(-1, pixels_per_side, pixels_per_side, 3)
 labels = labels.values
 cat_labels = F.one_hot(torch.tensor(labels, requires_grad=False), num_classes=10).numpy()
 #%%
+dataset = MyDataset(data, cat_labels)
+trainset, valset, testset = random_split(dataset, [0.85, 0.15])
+#%% Hyperparameters
+batch_size = 64
+epochs = 10
+lr = 0.001
+#%%
+class Net(nn.Module):
+    def __init__(self):
+        super(Net, self).__init__()
+        self.conv1 = nn.Conv2d(3, 6, 5)
+        self.pool = nn.MaxPool2d(2)
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.conv3 = nn.Conv2d(16, 120, 5)
+        self.flat = nn.Flatten()
+        self.fc1 = nn.Linear(120 * 49 * 49, 64)
+        self.fc2 = nn.Linear(64, 10)
+
+    def forward(self, x):
+        x = self.pool(nn.functional.relu(self.conv1(x)))
+        x = self.pool(nn.functional.relu(self.conv2(x)))
+        x = nn.functional.relu(self.conv3(x))
+        x = self.flat(x)
+        x = nn.functional.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
 
 
-
+net = Net()
+summary(net, input_size=(1, 3, 224, 224))
 
 #%%
-# TODO: AFTER DIVISION BETWEEN TRAIN AND VALIDATION. TRY DIFFERENT STRATS TO DETERMINE THE BEST ONE
+# TODO: AFTER DIVISION BETWEEN TRAIN AND VALIDATION. TRY DIFFERENT STRATS TO DETERMINE THE BEST ONE AND USE RIGHT DATA
 strats = ['ADASYN','BorderlineSMOTE','SVMSMOTE','KMeansSmote']
 data, labels = (dc.Balancer(strategy=strats[0],
                             n_jobs=-1,verbose=2,random_state=1,
