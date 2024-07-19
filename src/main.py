@@ -117,6 +117,51 @@ batch_size = 64
 epochs = 10
 lr = 0.001
 #%%
+def train_epoch(net, dataloader, lr=0.01, optimizer=None, loss_fn=nn.NLLLoss()):
+    optimizer = optimizer or torch.optim.Adam(net.parameters(), lr=lr)
+    net.train()
+    total_loss, acc, count = 0, 0, 0
+    for features, labels in dataloader:
+        optimizer.zero_grad()
+        count += len(labels)
+        labels = labels.to(device)
+        out = net(features.to(device))
+        loss = loss_fn(out, labels)  #cross_entropy(out,labels)
+        loss.backward()
+        optimizer.step()
+        total_loss += loss
+        _, predicted = torch.max(out, 1)
+        acc += (predicted == labels).sum()
+    return total_loss.item() / count, acc.item() / count
+
+
+def validate(net, dataloader, loss_fn=nn.NLLLoss()):
+    net.eval()
+    count, acc, loss = 0, 0, 0
+    with torch.no_grad():
+        for features, labels in dataloader:
+            count += len(labels)
+            labels = labels.to(device)
+            out = net(features.to(device))
+            loss += loss_fn(out, labels)
+            pred = torch.max(out, 1)[1]
+            acc += (pred == labels).sum()
+    return loss.item() / count, acc.item() / count
+
+
+def train(net, train_loader, test_loader, optimizer=None, lr=0.01, epochs=10, loss_fn=nn.NLLLoss()):
+    optimizer = optimizer or torch.optim.Adam(net.parameters(), lr=lr)
+    res = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': []}
+    for ep in range(epochs):
+        tl, ta = train_epoch(net, train_loader, optimizer=optimizer, lr=lr, loss_fn=loss_fn)
+        vl, va = validate(net, test_loader, loss_fn=loss_fn)
+        print(f"Epoch {ep + 1:2}, Train acc={ta:.3f}, Val acc={va:.3f}, Train loss={tl:.3f}, Val loss={vl:.3f}")
+        res['train_loss'].append(tl)
+        res['train_acc'].append(ta)
+        res['val_loss'].append(vl)
+        res['val_acc'].append(va)
+    return res
+
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
@@ -125,7 +170,7 @@ class Net(nn.Module):
         self.conv2 = nn.Conv2d(6, 16, 5)
         self.conv3 = nn.Conv2d(16, 120, 5)
         self.flat = nn.Flatten()
-        self.fc1 = nn.Linear(120 * 49 * 49, 64)
+        self.fc1 = nn.Linear(120 * 49 * 49, 64) # ((224 -4)/2 -4)/2 -4
         self.fc2 = nn.Linear(64, 10)
 
     def forward(self, x):
@@ -139,8 +184,7 @@ class Net(nn.Module):
 
 
 net = Net()
-summary(net, input_size=(1, 3, 224, 224))
-
+summary(net, input_size=(1, 3, pixels_per_side, pixels_per_side))
 #%%
 # TODO: AFTER DIVISION BETWEEN TRAIN AND VALIDATION. TRY DIFFERENT STRATS TO DETERMINE THE BEST ONE AND USE RIGHT DATA
 strats = ['ADASYN','BorderlineSMOTE','SVMSMOTE','KMeansSmote']
