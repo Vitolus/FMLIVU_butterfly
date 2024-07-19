@@ -162,6 +162,29 @@ def train(net, train_loader, test_loader, optimizer=None, lr=0.01, epochs=10, lo
         res['val_acc'].append(va)
     return res
 
+
+def train_long(net, train_loader, test_loader, epochs=5, lr=0.01, optimizer=None, loss_fn=nn.NLLLoss(), print_freq=10):
+    optimizer = optimizer or torch.optim.Adam(net.parameters(), lr=lr)
+    for epoch in range(epochs):
+        net.train()
+        total_loss, acc, count = 0, 0, 0
+        for i, (features, labels) in enumerate(train_loader):
+            lbls = labels.to(device)
+            optimizer.zero_grad()
+            out = net(features.to(device))
+            loss = loss_fn(out, lbls)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss
+            _, predicted = torch.max(out, 1)
+            acc += (predicted == lbls).sum()
+            count += len(labels)
+            if i % print_freq == 0:
+                print("Epoch {}, minibatch {}: train acc = {}, train loss = {}"
+                      .format(epoch, i, acc.item() / count, total_loss.item() / count))
+        vl, va = validate(net, test_loader, loss_fn)
+        print("Epoch {} done, validation acc = {}, validation loss = {}".format(epoch, va, vl))
+
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
