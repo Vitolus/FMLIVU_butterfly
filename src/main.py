@@ -2,6 +2,7 @@
 import os
 import cv2
 from PIL import Image
+import optuna
 import atom
 import atom.data_cleaning as dc
 import atom.feature_engineering as fe
@@ -10,8 +11,9 @@ from torch import nn, optim
 import torch.nn.functional as F
 import torchvision
 from torchvision import datasets, transforms
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, random_split, Subset
 from torchinfo import summary
+from sklearn.model_selection import StratifiedKFold
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -31,17 +33,8 @@ for file in folder:
     data.append(img)
     labels.append(int(file[:3]) - 1)
 labels = np.array(labels)
-#labels = labels.reshape(-1, 1)
-classes = {0: 'Danaus plexippus',
-              1: 'Heliconius charitonius',
-              2: 'Heliconius erato',
-              3: 'Junonia coenia',
-              4: 'Lycaena phlaeas',
-              5: 'Nymphalis antiopa',
-              6: 'Papilio cresphontes',
-              7: 'Pieris rapae',
-              8: 'Vanessa atalanta',
-              9: 'Vanessa cardui'}
+classes = ['Danaus plexippus', 'Heliconius charitonius', 'Heliconius erato', 'Junonia coenia', 'Lycaena phlaeas',
+           'Nymphalis antiopa', 'Papilio cresphontes', 'Pieris rapae', 'Vanessa atalanta', 'Vanessa cardui']
 print([classes[labels[i]] for i in range(10)])
 #%%
 class MyDataset(torch.utils.data.Dataset):
@@ -108,83 +101,11 @@ data, labels = (dc.Pruner(strategy=['lof', 'iforest'],
 #%%
 data = data.values.reshape(-1, pixels_per_side, pixels_per_side, 3)
 labels = labels.values
-cat_labels = F.one_hot(torch.tensor(labels, requires_grad=False), num_classes=10).numpy()
 #%%
-dataset = MyDataset(data, cat_labels)
-trainset, valset, testset = random_split(dataset, [0.85, 0.15])
-#%% Hyperparameters
-batch_size = 64
-epochs = 10
-lr = 0.001
+dataset = MyDataset(data, labels)
+trainset, testset = random_split(dataset, [0.85, 0.15])
+testloader = DataLoader(testset, batch_size=64, shuffle=False)
 #%%
-def train_epoch(net, dataloader, lr=0.01, optimizer=None, loss_fn=nn.NLLLoss()):
-    optimizer = optimizer or torch.optim.Adam(net.parameters(), lr=lr)
-    net.train()
-    total_loss, acc, count = 0, 0, 0
-    for features, labels in dataloader:
-        optimizer.zero_grad()
-        count += len(labels)
-        labels = labels.to(device)
-        out = net(features.to(device))
-        loss = loss_fn(out, labels)  #cross_entropy(out,labels)
-        loss.backward()
-        optimizer.step()
-        total_loss += loss
-        _, predicted = torch.max(out, 1)
-        acc += (predicted == labels).sum()
-    return total_loss.item() / count, acc.item() / count
-
-
-def validate(net, dataloader, loss_fn=nn.NLLLoss()):
-    net.eval()
-    count, acc, loss = 0, 0, 0
-    with torch.no_grad():
-        for features, labels in dataloader:
-            count += len(labels)
-            labels = labels.to(device)
-            out = net(features.to(device))
-            loss += loss_fn(out, labels)
-            pred = torch.max(out, 1)[1]
-            acc += (pred == labels).sum()
-    return loss.item() / count, acc.item() / count
-
-
-def train(net, train_loader, test_loader, optimizer=None, lr=0.01, epochs=10, loss_fn=nn.NLLLoss()):
-    optimizer = optimizer or torch.optim.Adam(net.parameters(), lr=lr)
-    res = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': []}
-    for ep in range(epochs):
-        tl, ta = train_epoch(net, train_loader, optimizer=optimizer, lr=lr, loss_fn=loss_fn)
-        vl, va = validate(net, test_loader, loss_fn=loss_fn)
-        print(f"Epoch {ep + 1:2}, Train acc={ta:.3f}, Val acc={va:.3f}, Train loss={tl:.3f}, Val loss={vl:.3f}")
-        res['train_loss'].append(tl)
-        res['train_acc'].append(ta)
-        res['val_loss'].append(vl)
-        res['val_acc'].append(va)
-    return res
-
-
-def train_long(net, train_loader, test_loader, epochs=5, lr=0.01, optimizer=None, loss_fn=nn.NLLLoss(), print_freq=10):
-    optimizer = optimizer or torch.optim.Adam(net.parameters(), lr=lr)
-    for epoch in range(epochs):
-        net.train()
-        total_loss, acc, count = 0, 0, 0
-        for i, (features, labels) in enumerate(train_loader):
-            lbls = labels.to(device)
-            optimizer.zero_grad()
-            out = net(features.to(device))
-            loss = loss_fn(out, lbls)
-            loss.backward()
-            optimizer.step()
-            total_loss += loss
-            _, predicted = torch.max(out, 1)
-            acc += (predicted == lbls).sum()
-            count += len(labels)
-            if i % print_freq == 0:
-                print("Epoch {}, minibatch {}: train acc = {}, train loss = {}"
-                      .format(epoch, i, acc.item() / count, total_loss.item() / count))
-        vl, va = validate(net, test_loader, loss_fn)
-        print("Epoch {} done, validation acc = {}, validation loss = {}".format(epoch, va, vl))
-
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
@@ -205,9 +126,63 @@ class Net(nn.Module):
         x = self.fc2(x)
         return x
 
-
-net = Net()
+k = 5
+net = Net().to(device)
 summary(net, input_size=(1, 3, pixels_per_side, pixels_per_side))
+#%%
+def fit(net, trainloader, optimizer, loss_fn=nn.CrossEntropyLoss()):
+    net.train()
+    total_loss = acc = count = 0
+    for features, labels in trainloader:
+        features = features.to(device)
+        labels = labels.to(device)
+        optimizer.zero_grad()
+        logits = net(features)
+        loss = loss_fn(logits, labels)
+        loss.backward()
+        optimizer.step()
+        total_loss += loss
+        _, predicted = torch.max(logits, 1)
+        acc += (predicted == labels).sum()
+        count += len(labels)
+    return total_loss.item() / count, acc.item() / count
+
+def predict(net, valloader, loss_fn):
+    pass
+
+def objective(trial):
+    # Define the hyperparameters
+    lr = trial.suggest_loguniform('lr', 1e-5, 1e-1)
+    batch_size = trial.suggest_categorical('batch_size', [32, 64, 128, 256])
+    epochs = trial.suggest_int('epochs', 5, 50)
+    optimizer_name = trial.suggest_categorical('optimizer', ['SGD', 'Adam'])
+    if optimizer_name == 'SGD':
+        optimizer = optim.SGD(net.parameters(), lr=lr)
+    else:
+        optimizer = optim.Adam(net.parameters(), lr=lr)
+
+    criterion = nn.CrossEntropyLoss()
+    skf = StratifiedKFold(n_splits=k, shuffle=True, random_state=1)
+    val_accs = []
+    for train_index, val_index in skf.split(trainset.data, trainset.labels):
+        train_data = Subset(trainset, train_index)
+        val_data = Subset(trainset, val_index)
+        trainloader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
+        valloader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
+
+        # Train the model
+        for epoch in range(epochs):
+            train_loss, train_acc = fit(net, trainloader, optimizer, criterion)
+            val_loss, val_acc = predict(net, valloader, criterion)
+        val_accs.append(val_acc)
+
+    # Return the average validation accuracy across all folds
+    return np.mean(val_accs)
+# Create the study and run the optimization
+study = optuna.create_study(direction='maximize')
+study.optimize(lambda trial: objective(trial), n_trials=100)
+
+
 #%%
 # TODO: AFTER DIVISION BETWEEN TRAIN AND VALIDATION. TRY DIFFERENT STRATS TO DETERMINE THE BEST ONE AND USE RIGHT DATA
 strats = ['ADASYN','BorderlineSMOTE','SVMSMOTE','KMeansSmote']
