@@ -10,7 +10,7 @@ import torch
 from torch import nn, optim
 import torch.nn.functional as F
 import torchvision
-from torchvision import datasets, transforms
+from torchvision import transforms
 from torch.utils.data import DataLoader, random_split, Subset
 from torchinfo import summary
 from sklearn.model_selection import StratifiedKFold
@@ -151,42 +151,33 @@ def predict(net, valloader, loss_fn):
     pass
 
 def objective(trial):
-    # Define the hyperparameters
     lr = trial.suggest_loguniform('lr', 1e-5, 1e-1)
     batch_size = trial.suggest_categorical('batch_size', [32, 64, 128, 256])
     epochs = trial.suggest_int('epochs', 5, 50)
     optimizer_name = trial.suggest_categorical('optimizer', ['SGD', 'Adam'])
+    strategy = trial.suggest_categorical('strategy', ['ADASYN', 'BorderlineSMOTE', 'SVMSMOTE', 'KMeansSmote'])
     if optimizer_name == 'SGD':
         optimizer = optim.SGD(net.parameters(), lr=lr)
     else:
         optimizer = optim.Adam(net.parameters(), lr=lr)
-
     criterion = nn.CrossEntropyLoss()
     skf = StratifiedKFold(n_splits=k, shuffle=True, random_state=1)
     val_accs = []
     for train_index, val_index in skf.split(trainset.data, trainset.labels):
-        train_data = Subset(trainset, train_index)
+        X_train, y_train = (dc.Balancer(strategy=strategy,
+                                        n_jobs=-1,verbose=2,
+                                        random_state=1,)
+                            .fit_transform(trainset.data[train_index], trainset.labels[train_index]))
+        train_data = MyDataset(X_train, y_train)
         val_data = Subset(trainset, val_index)
         trainloader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
         valloader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
 
-        # Train the model
         for epoch in range(epochs):
             train_loss, train_acc = fit(net, trainloader, optimizer, criterion)
             val_loss, val_acc = predict(net, valloader, criterion)
         val_accs.append(val_acc)
-
-    # Return the average validation accuracy across all folds
     return np.mean(val_accs)
-# Create the study and run the optimization
+
 study = optuna.create_study(direction='maximize')
 study.optimize(lambda trial: objective(trial), n_trials=100)
-
-
-#%%
-# TODO: AFTER DIVISION BETWEEN TRAIN AND VALIDATION. TRY DIFFERENT STRATS TO DETERMINE THE BEST ONE AND USE RIGHT DATA
-strats = ['ADASYN','BorderlineSMOTE','SVMSMOTE','KMeansSmote']
-data, labels = (dc.Balancer(strategy=strats[0],
-                            n_jobs=-1,verbose=2,random_state=1,
-                            )
-                .fit_transform(data, labels))
