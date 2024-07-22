@@ -126,7 +126,6 @@ class Net(nn.Module):
         x = self.fc2(x)
         return x
 
-k = 5
 net = Net().to(device)
 summary(net, input_size=(1, 3, pixels_per_side, pixels_per_side))
 #%%
@@ -148,7 +147,18 @@ def fit(net, trainloader, optimizer, loss_fn=nn.CrossEntropyLoss()):
     return total_loss.item() / count, acc.item() / count
 
 def predict(net, valloader, loss_fn):
-    pass
+    net.eval()
+    count = acc = total_loss = 0
+    with torch.no_grad():
+        for features, labels in valloader:
+            features = features.to(device)
+            labels = labels.to(device)
+            count += len(labels)
+            logits = net(features)
+            total_loss += loss_fn(logits, labels)
+            pred = torch.max(logits, 1)[1]
+            acc += (pred == labels).sum()
+    return total_loss.item() / count, acc.item() / count
 
 def objective(trial):
     lr = trial.suggest_loguniform('lr', 1e-5, 1e-1)
@@ -161,7 +171,7 @@ def objective(trial):
     else:
         optimizer = optim.Adam(net.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss()
-    skf = StratifiedKFold(n_splits=k, shuffle=True, random_state=1)
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=1)
     val_accs = []
     for train_index, val_index in skf.split(trainset.data, trainset.labels):
         X_train, y_train = (dc.Balancer(strategy=strategy,
