@@ -5,7 +5,6 @@ from PIL import Image
 import optuna
 import atom
 import atom.data_cleaning as dc
-import atom.feature_engineering as fe
 import torch
 from torch import nn, optim
 import torch.nn.functional as F
@@ -132,6 +131,7 @@ summary(net, input_size=(1, 3, pixels_per_side, pixels_per_side))
 def fit(net, trainloader, optimizer, loss_fn=nn.CrossEntropyLoss()):
     net.train()
     total_loss = acc = count = 0
+    # TODO: error on index in train loader
     for features, labels in trainloader:
         features = features.to(device)
         labels = labels.to(device)
@@ -165,7 +165,6 @@ def objective(trial):
     batch_size = trial.suggest_categorical('batch_size', [32, 64, 128, 256])
     epochs = trial.suggest_int('epochs', 5, 50)
     optimizer_name = trial.suggest_categorical('optimizer', ['SGD', 'Adam'])
-    strategy = trial.suggest_categorical('strategy', ['ADASYN', 'BorderlineSMOTE', 'SVMSMOTE', 'KMeansSmote'])
     if optimizer_name == 'SGD':
         optimizer = optim.SGD(net.parameters(), lr=lr)
     else:
@@ -173,12 +172,8 @@ def objective(trial):
     criterion = nn.CrossEntropyLoss()
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=1)
     val_accs = []
-    for train_index, val_index in skf.split(trainset.data, trainset.labels):
-        X_train, y_train = (dc.Balancer(strategy=strategy,
-                                        n_jobs=-1,verbose=2,
-                                        random_state=1,)
-                            .fit_transform(trainset.data[train_index], trainset.labels[train_index]))
-        train_data = MyDataset(X_train, y_train)
+    for train_index, val_index in skf.split(trainset.dataset.data, trainset.dataset.labels):
+        train_data = Subset(trainset, train_index)
         val_data = Subset(trainset, val_index)
         trainloader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
         valloader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
@@ -186,8 +181,19 @@ def objective(trial):
         for epoch in range(epochs):
             train_loss, train_acc = fit(net, trainloader, optimizer, criterion)
             val_loss, val_acc = predict(net, valloader, criterion)
+            print(f"Epoch {epoch + 1:2}, Train acc={train_acc:.3f}, Val acc={val_acc:.3f}, Train loss={train_loss:.3f}, Val loss={val_loss:.3f}")
         val_accs.append(val_acc)
     return np.mean(val_accs)
 
 study = optuna.create_study(direction='maximize')
 study.optimize(lambda trial: objective(trial), n_trials=100)
+#%%
+strategy = trial.suggest_categorical('strategy', ['ADASYN', 'BorderlineSMOTE', 'SVMSMOTE', 'KMeansSmote'])
+X_train = trainset.dataset.data[train_index]
+        X_train = X_train.reshape(len(X_train), -1)
+        y_train = trainset.dataset.labels[train_index]
+        X_train, y_train = (dc.Balancer(strategy=strategy,
+                                        n_jobs=-1,verbose=2,
+                                        random_state=1,)
+                            .fit_transform(X_train, y_train))
+        train_data = MyDataset(X_train, y_train)
