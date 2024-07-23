@@ -168,6 +168,7 @@ def objective(trial, net, trainset, X, y):
     epochs = trial.suggest_int('epochs', 5, 50)
     optimizer = getattr(optim, trial.suggest_categorical('optimizer', ['SGD', 'Adam']))(net.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss()
+    # TODO: print the hyperparameters used in the trial
 
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=1)
     val_accs = []
@@ -180,8 +181,9 @@ def objective(trial, net, trainset, X, y):
         for epoch in range(epochs):
             train_loss, train_acc = fit(net, trainloader, optimizer, criterion)
             val_loss, val_acc = predict(net, valloader, criterion)
-            print(
-                f"Epoch {epoch + 1:2}, Train acc={train_acc:.3f}, Val acc={val_acc:.3f}, Train loss={train_loss:.3f}, Val loss={val_loss:.3f}")
+            # TODO: maybe is too verbose
+            print(f"Epoch {epoch + 1:2}, Train acc={train_acc:.3f}, Val acc={val_acc:.3f}, Train loss={train_loss:.3f},"
+                  f"Val loss={val_loss:.3f}")
         val_accs.append(val_acc)
     return np.mean(val_accs)
 
