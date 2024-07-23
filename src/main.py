@@ -3,7 +3,6 @@ import os
 import cv2
 from PIL import Image
 import optuna
-import atom
 import atom.data_cleaning as dc
 import torch
 from torch import nn, optim
@@ -17,11 +16,12 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 #%%
-path = 'data/images'
+path = '../data/images'
 pixels_per_side = 224
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+#%%
 print("Using device: ", device)
-#%% building the dataset
+#%%
 data = []
 labels = []
 folder = os.listdir(path)
@@ -71,24 +71,23 @@ std = torch.sqrt(sum_of_squared_diff / total_count)
 mean = [mean[0].item(), mean[1].item(), mean[2].item()]
 std = [std[0].item(), std[1].item(), std[2].item()]
 print(mean, std)
+#%% Data cleaning
+print(data.shape, labels.shape)
+print(data)
+print(labels)
 #%%
 trans = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize(mean=mean, std=std)
 ])
 dataset = MyDataset(data, labels, transform=trans)
-dataloader = torch.utils.data.DataLoader(dataset, batch_size=64, shuffle=False)
+dataloader = DataLoader(dataset, batch_size=64, shuffle=False)
 data = []
 for img, _ in dataloader:
     data.append(img.numpy())
-data = np.concatenate(data, axis=0).transpose((0, 2, 3, 1))
-#%%
-print(data.shape, labels.shape)
-print(data)
-print(labels)
-#%%
+data = np.concatenate(data, axis=0)
 data = data.reshape(len(data), -1)
-#%% Data cleaning
+#%%
 data, labels = (dc.Pruner(strategy=['lof', 'iforest'],
                           device='cpu',
                           engine='sklearn',
@@ -100,8 +99,11 @@ data, labels = (dc.Pruner(strategy=['lof', 'iforest'],
 #%%
 data = data.values.reshape(-1, pixels_per_side, pixels_per_side, 3)
 labels = labels.values
-#%%
-dataset = MyDataset(data, labels)
+trans = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize(mean=mean, std=std)
+])
+dataset = MyDataset(data, labels, transform=trans)
 trainset, testset = random_split(dataset, [0.85, 0.15])
 testloader = DataLoader(testset, batch_size=64, shuffle=False)
 #%%
@@ -131,17 +133,16 @@ summary(net, input_size=(1, 3, pixels_per_side, pixels_per_side))
 def fit(net, trainloader, optimizer, loss_fn=nn.CrossEntropyLoss()):
     net.train()
     total_loss = acc = count = 0
-    # TODO: error on index in train loader
     for features, labels in trainloader:
         features = features.to(device)
         labels = labels.to(device)
         optimizer.zero_grad()
-        logits = net(features)
-        loss = loss_fn(logits, labels)
+        out = net(features)
+        loss = loss_fn(out, labels)
         loss.backward()
         optimizer.step()
         total_loss += loss
-        _, predicted = torch.max(logits, 1)
+        _, predicted = torch.max(out, 1)
         acc += (predicted == labels).sum()
         count += len(labels)
     return total_loss.item() / count, acc.item() / count
@@ -154,25 +155,23 @@ def predict(net, valloader, loss_fn):
             features = features.to(device)
             labels = labels.to(device)
             count += len(labels)
-            logits = net(features)
-            total_loss += loss_fn(logits, labels)
-            pred = torch.max(logits, 1)[1]
+            out = net(features)
+            total_loss += loss_fn(out, labels)
+            pred = torch.max(out, 1)[1]
             acc += (pred == labels).sum()
     return total_loss.item() / count, acc.item() / count
 
-def objective(trial):
-    lr = trial.suggest_loguniform('lr', 1e-5, 1e-1)
+
+def objective(trial, net, trainset, X, y):
+    lr = trial.suggest_float('lr', 1e-5, 1e-1, log=True)
     batch_size = trial.suggest_categorical('batch_size', [32, 64, 128, 256])
     epochs = trial.suggest_int('epochs', 5, 50)
-    optimizer_name = trial.suggest_categorical('optimizer', ['SGD', 'Adam'])
-    if optimizer_name == 'SGD':
-        optimizer = optim.SGD(net.parameters(), lr=lr)
-    else:
-        optimizer = optim.Adam(net.parameters(), lr=lr)
+    optimizer = getattr(optim, trial.suggest_categorical('optimizer', ['SGD', 'Adam']))(net.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss()
+
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=1)
     val_accs = []
-    for train_index, val_index in skf.split(trainset.dataset.data, trainset.dataset.labels):
+    for train_index, val_index in skf.split(X, y):
         train_data = Subset(trainset, train_index)
         val_data = Subset(trainset, val_index)
         trainloader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
@@ -181,19 +180,16 @@ def objective(trial):
         for epoch in range(epochs):
             train_loss, train_acc = fit(net, trainloader, optimizer, criterion)
             val_loss, val_acc = predict(net, valloader, criterion)
-            print(f"Epoch {epoch + 1:2}, Train acc={train_acc:.3f}, Val acc={val_acc:.3f}, Train loss={train_loss:.3f}, Val loss={val_loss:.3f}")
+            print(
+                f"Epoch {epoch + 1:2}, Train acc={train_acc:.3f}, Val acc={val_acc:.3f}, Train loss={train_loss:.3f}, Val loss={val_loss:.3f}")
         val_accs.append(val_acc)
     return np.mean(val_accs)
 
+X = np.zeros(len(trainset))
+labelloader =  DataLoader(trainset, batch_size=64, shuffle=False)
+y = []
+for _, label in labelloader:
+    y.append(label.numpy())
+y = np.concatenate(y, axis=0)
 study = optuna.create_study(direction='maximize')
-study.optimize(lambda trial: objective(trial), n_trials=100)
-#%%
-strategy = trial.suggest_categorical('strategy', ['ADASYN', 'BorderlineSMOTE', 'SVMSMOTE', 'KMeansSmote'])
-X_train = trainset.dataset.data[train_index]
-        X_train = X_train.reshape(len(X_train), -1)
-        y_train = trainset.dataset.labels[train_index]
-        X_train, y_train = (dc.Balancer(strategy=strategy,
-                                        n_jobs=-1,verbose=2,
-                                        random_state=1,)
-                            .fit_transform(X_train, y_train))
-        train_data = MyDataset(X_train, y_train)
+study.optimize(lambda trial: objective(trial, net, trainset, X, y), n_trials=10)
