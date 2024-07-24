@@ -3,6 +3,7 @@ import os
 import cv2
 from PIL import Image
 import optuna
+from optuna.trial import TrialState
 import atom.data_cleaning as dc
 import torch
 from torch import nn, optim
@@ -164,15 +165,17 @@ def predict(net, valloader, loss_fn):
 
 def objective(trial, net, trainset, X, y):
     lr = trial.suggest_float('lr', 1e-5, 1e-1, log=True)
-    batch_size = trial.suggest_categorical('batch_size', [32, 64, 128, 256])
-    epochs = trial.suggest_int('epochs', 5, 50)
+    batch_size = trial.suggest_categorical('batch_size', [64, 128, 256])
+    epochs = trial.suggest_int('epochs', 10, 25)
     optimizer = getattr(optim, trial.suggest_categorical('optimizer', ['SGD', 'Adam']))(net.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss()
-    # TODO: print the hyperparameters used in the trial
 
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=1)
+    print(f"\ntrial #{trial.number} => lr={lr}, batch_size={batch_size}, epochs={epochs}, optimizer={optimizer}")
+    skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=1)
     val_accs = []
+    split_num = 0
     for train_index, val_index in skf.split(X, y):
+        split_num += 1
         train_data = Subset(trainset, train_index)
         val_data = Subset(trainset, val_index)
         trainloader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
@@ -181,17 +184,38 @@ def objective(trial, net, trainset, X, y):
         for epoch in range(epochs):
             train_loss, train_acc = fit(net, trainloader, optimizer, criterion)
             val_loss, val_acc = predict(net, valloader, criterion)
-            # TODO: maybe is too verbose
-            print(f"Epoch {epoch + 1:2}, Train acc={train_acc:.3f}, Val acc={val_acc:.3f}, Train loss={train_loss:.3f},"
-                  f"Val loss={val_loss:.3f}")
+
+        print(f"Split {split_num}, Train acc={train_acc:.3f}, Val acc={val_acc:.3f}, Train loss={train_loss:.3f},"
+              f"Val loss={val_loss:.3f}")
         val_accs.append(val_acc)
-    return np.mean(val_accs)
+        mean_acc = np.mean(val_accs)
+        trial.report(mean_acc, split_num)
+        if trial.should_prune():
+            raise optuna.exceptions.TrialPruned()
+    return mean_acc
 
 X = np.zeros(len(trainset))
-labelloader =  DataLoader(trainset, batch_size=64, shuffle=False)
+labelloader =  DataLoader(trainset, batch_size=128, shuffle=False)
 y = []
 for _, label in labelloader:
     y.append(label.numpy())
 y = np.concatenate(y, axis=0)
 study = optuna.create_study(direction='maximize')
-study.optimize(lambda trial: objective(trial, net, trainset, X, y), n_trials=10)
+study.optimize(lambda trial: objective(trial, net, trainset, X, y), n_trials=6)
+#%%
+pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
+complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
+
+print("Study statistics: ")
+print("  Number of finished trials: ", len(study.trials))
+print("  Number of pruned trials: ", len(pruned_trials))
+print("  Number of complete trials: ", len(complete_trials))
+
+print("Best trial:")
+trial = study.best_trial
+
+print("  Value: ", trial.value)
+
+print("  Params: ")
+for key, value in trial.params.items():
+    print("    {}: {}".format(key, value))
