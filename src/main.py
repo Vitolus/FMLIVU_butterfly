@@ -106,7 +106,6 @@ trans = transforms.Compose([
 ])
 dataset = MyDataset(data, labels, transform=trans)
 trainset, testset = random_split(dataset, [0.85, 0.15])
-testloader = DataLoader(testset, batch_size=64, shuffle=False)
 #%%
 class Net(nn.Module):
     def __init__(self):
@@ -148,7 +147,7 @@ def fit(net, trainloader, optimizer, loss_fn=nn.CrossEntropyLoss()):
         count += len(labels)
     return total_loss.item() / count, acc.item() / count
 
-def predict(net, valloader, loss_fn):
+def predict(net, valloader, loss_fn=nn.CrossEntropyLoss()):
     net.eval()
     count = acc = total_loss = 0
     with torch.no_grad():
@@ -167,8 +166,7 @@ def objective(trial, net, trainset, X, y):
     lr = trial.suggest_float('lr', 1e-5, 1e-1, log=True)
     batch_size = trial.suggest_categorical('batch_size', [64, 128, 256])
     epochs = trial.suggest_int('epochs', 10, 25)
-    optimizer = getattr(optim, trial.suggest_categorical('optimizer', ['SGD', 'Adam']))(net.parameters(), lr=lr)
-    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(net.parameters(), lr=lr)
 
     print(f"\ntrial #{trial.number} => lr={lr}, batch_size={batch_size}, epochs={epochs}, optimizer={optimizer}")
     skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=1)
@@ -182,8 +180,8 @@ def objective(trial, net, trainset, X, y):
         valloader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
 
         for epoch in range(epochs):
-            train_loss, train_acc = fit(net, trainloader, optimizer, criterion)
-            val_loss, val_acc = predict(net, valloader, criterion)
+            train_loss, train_acc = fit(net, trainloader, optimizer,)
+            val_loss, val_acc = predict(net, valloader)
 
         print(f"Split {split_num}, Train acc={train_acc:.3f}, Val acc={val_acc:.3f}, Train loss={train_loss:.3f},"
               f"Val loss={val_loss:.3f}")
@@ -213,11 +211,17 @@ print("  Number of complete trials: ", len(complete_trials))
 
 print("Best trial:")
 trial = study.best_trial
-
 print("  Value: ", trial.value)
-
 print("  Params: ")
 for key, value in trial.params.items():
     print("    {}: {}".format(key, value))
-#%%
-# TODO: Implement net testing
+#%% Testing
+trainloader = DataLoader(trainset, batch_size=trial.params['batch_size'], shuffle=True)
+testloader = DataLoader(testset, batch_size=trial.params['batch_size'], shuffle=False)
+optimizer = optim.Adam(net.parameters(), lr=trial.params['lr'])
+for epoch in range(trial.params['epochs']):
+    train_loss, train_acc = fit(net,trainloader, optimizer)
+    print(f"Epoch {epoch + 1}, Train acc={train_acc:.3f}, Train loss={train_loss:.3f}")
+test_loss, test_acc = predict(net, testloader)
+print(f"Test acc={test_acc:.3f}, Train loss={test_loss:.3f}")
+
