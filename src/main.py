@@ -4,7 +4,6 @@ import cv2
 from PIL import Image
 import optuna
 from optuna.trial import TrialState
-import atom.data_cleaning as dc
 import torch
 from torch import nn, optim
 import torch.nn.functional as F
@@ -17,8 +16,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 #%%
-path = '../data/images'
-pixels_per_side = 224
+path = 'data/images'
+pixels_per_side = 220
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 #%%
 print("Using device: ", device)
@@ -36,6 +35,26 @@ labels = np.array(labels)
 classes = ['Danaus plexippus', 'Heliconius charitonius', 'Heliconius erato', 'Junonia coenia', 'Lycaena phlaeas',
            'Nymphalis antiopa', 'Papilio cresphontes', 'Pieris rapae', 'Vanessa atalanta', 'Vanessa cardui']
 print([classes[labels[i]] for i in range(10)])
+#%%
+fig,ax=plt.subplots(5,2)
+fig.set_size_inches(15,15)
+for i in range(5):
+    for j in range (2):
+        l=np.random.randint(0,len(labels))
+        ax[i,j].imshow(data[l])
+        ax[i,j].set_title(str(classes[labels[l]]))
+plt.axis('off')
+plt.tight_layout()
+#%%
+df = pd.DataFrame(labels, columns=['labels'])
+df['labels'] = [classes[i] for i in df['labels']]
+cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
+colors = [cycle[i % len(cycle)] for i in range(len(df['labels'].unique()))]
+df['labels'].value_counts().plot(kind='bar', color=colors)
+plt.xlabel('Species')
+plt.ylabel('Counts')
+plt.xticks(rotation=45, ha='right')
+plt.show()
 #%%
 class MyDataset(torch.utils.data.Dataset):
     def __init__(self, data, labels, transform=None):
@@ -73,33 +92,12 @@ mean = [mean[0].item(), mean[1].item(), mean[2].item()]
 std = [std[0].item(), std[1].item(), std[2].item()]
 print(mean, std)
 #%% Data cleaning
+data = np.array(data)
+labels = np.array(labels)
 print(data.shape, labels.shape)
 print(data)
 print(labels)
 #%%
-trans = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize(mean=mean, std=std)
-])
-dataset = MyDataset(data, labels, transform=trans)
-dataloader = DataLoader(dataset, batch_size=64, shuffle=False)
-data = []
-for img, _ in dataloader:
-    data.append(img.numpy())
-data = np.concatenate(data, axis=0)
-data = data.reshape(len(data), -1)
-#%%
-data, labels = (dc.Pruner(strategy=['lof', 'iforest'],
-                          device='cpu',
-                          engine='sklearn',
-                          verbose=2,
-                          iforest={'contamination': 'auto', 'bootstrap': True, 'n_jobs': -1, 'random_state': 1},
-                          lof={'n_neighbors': 20, 'contamination': 'auto', 'n_jobs': -1}
-                          )
-                .fit_transform(data, labels))
-#%%
-data = data.values.reshape(-1, pixels_per_side, pixels_per_side, 3)
-labels = labels.values
 trans = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize(mean=mean, std=std)
@@ -115,7 +113,7 @@ class Net(nn.Module):
         self.conv2 = nn.Conv2d(6, 16, 5)
         self.conv3 = nn.Conv2d(16, 120, 5)
         self.flat = nn.Flatten()
-        self.fc1 = nn.Linear(120 * 49 * 49, 64) # ((224 -4)/2 -4)/2 -4
+        self.fc1 = nn.Linear(120 * 48 * 48, 64) # ((220 -4)/2 -4)/2 -4
         self.fc2 = nn.Linear(64, 10)
 
     def forward(self, x):
@@ -126,13 +124,10 @@ class Net(nn.Module):
         x = nn.functional.relu(self.fc1(x))
         x = self.fc2(x)
         return x
-
-net = Net().to(device)
-summary(net, input_size=(1, 3, pixels_per_side, pixels_per_side))
 #%%
 def fit(net, trainloader, optimizer, loss_fn=nn.CrossEntropyLoss()):
     net.train()
-    total_loss = acc = count = 0
+    total_loss, acc, count = 0, 0, 0
     for features, labels in trainloader:
         features = features.to(device)
         labels = labels.to(device)
@@ -149,7 +144,7 @@ def fit(net, trainloader, optimizer, loss_fn=nn.CrossEntropyLoss()):
 
 def predict(net, valloader, loss_fn=nn.CrossEntropyLoss()):
     net.eval()
-    count = acc = total_loss = 0
+    count, acc, total_loss = 0, 0, 0
     with torch.no_grad():
         for features, labels in valloader:
             features = features.to(device)
@@ -161,16 +156,16 @@ def predict(net, valloader, loss_fn=nn.CrossEntropyLoss()):
             acc += (pred == labels).sum()
     return total_loss.item() / count, acc.item() / count
 
-
-def objective(trial, net, trainset, X, y):
-    lr = trial.suggest_float('lr', 1e-5, 1e-1, log=True)
+def objective(trial, trainset, X, y):
+    lr = trial.suggest_float('lr', 0.001, 0.1, log=True)
     batch_size = trial.suggest_categorical('batch_size', [64, 128, 256])
-    epochs = trial.suggest_int('epochs', 10, 25)
+    epochs = trial.suggest_int('epochs', 20, 60)
+    net = Net().to(device)
     optimizer = optim.Adam(net.parameters(), lr=lr)
 
-    print(f"\ntrial #{trial.number} => lr={lr}, batch_size={batch_size}, epochs={epochs}, optimizer={optimizer}")
     skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=1)
     val_accs = []
+    train_acc, train_loss, val_acc, val_loss, mean_acc = 0, 0, 0, 0, 0
     split_num = 0
     for train_index, val_index in skf.split(X, y):
         split_num += 1
@@ -180,26 +175,25 @@ def objective(trial, net, trainset, X, y):
         valloader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
 
         for epoch in range(epochs):
-            train_loss, train_acc = fit(net, trainloader, optimizer,)
+            train_loss, train_acc = fit(net, trainloader, optimizer)
             val_loss, val_acc = predict(net, valloader)
 
-        print(f"Split {split_num}, Train acc={train_acc:.3f}, Val acc={val_acc:.3f}, Train loss={train_loss:.3f},"
-              f"Val loss={val_loss:.3f}")
         val_accs.append(val_acc)
         mean_acc = np.mean(val_accs)
         trial.report(mean_acc, split_num)
         if trial.should_prune():
             raise optuna.exceptions.TrialPruned()
+    print(f"Train acc={train_acc:.3f}, Val acc={val_acc:.3f}, Train loss={train_loss:.3f}, Val loss={val_loss:.3f}")
     return mean_acc
-
+#%%
 X = np.zeros(len(trainset))
 labelloader =  DataLoader(trainset, batch_size=128, shuffle=False)
 y = []
 for _, label in labelloader:
     y.append(label.numpy())
 y = np.concatenate(y, axis=0)
-study = optuna.create_study(direction='maximize')
-study.optimize(lambda trial: objective(trial, net, trainset, X, y), n_trials=6)
+study = optuna.create_study(direction='maximize', pruner=optuna.pruners.MedianPruner())
+study.optimize(lambda trial: objective(trial, trainset, X, y), n_trials=6)
 #%%
 pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
 complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
@@ -215,13 +209,34 @@ print("  Value: ", trial.value)
 print("  Params: ")
 for key, value in trial.params.items():
     print("    {}: {}".format(key, value))
-#%% Testing
+#%%
+net = Net().to(device)
+summary(net, input_size=(1, 3, pixels_per_side, pixels_per_side))
+#%%
 trainloader = DataLoader(trainset, batch_size=trial.params['batch_size'], shuffle=True)
 testloader = DataLoader(testset, batch_size=trial.params['batch_size'], shuffle=False)
 optimizer = optim.Adam(net.parameters(), lr=trial.params['lr'])
+train_accs = train_losses = test_accs = test_losses = []
 for epoch in range(trial.params['epochs']):
     train_loss, train_acc = fit(net,trainloader, optimizer)
-    print(f"Epoch {epoch + 1}, Train acc={train_acc:.3f}, Train loss={train_loss:.3f}")
-test_loss, test_acc = predict(net, testloader)
-print(f"Test acc={test_acc:.3f}, Train loss={test_loss:.3f}")
+    train_losses.append(train_loss)
+    train_accs.append(train_acc)
+    test_loss, test_acc = predict(net, testloader)
+    test_losses.append(test_loss)
+    test_accs.append(test_acc)
+    print(f"Epoch {epoch + 1}, Train acc={train_acc:.3f}, Train loss={train_loss:.3f}, Test acc={test_acc:.3f},"
+          f"Test loss={test_loss:.3f}")
+#%% evaluate the model
+plt.plot(train_losses, label='Train loss')
+plt.plot(test_losses, label='Test loss')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.legend()
+plt.show()
 
+plt.plot(train_accs, label='Train acc')
+plt.plot(test_accs, label='Test acc')
+plt.xlabel('Epoch')
+plt.ylabel('Accuracy')
+plt.legend()
+plt.show()
