@@ -173,7 +173,7 @@ def objective(trial, trainset, X, y):
         val_data = Subset(trainset, val_index)
         trainloader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
         valloader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
-
+        # TODO: try use tqdm library for progress bar
         for epoch in range(epochs):
             train_loss, train_acc = fit(net, trainloader, optimizer)
             val_loss, val_acc = predict(net, valloader)
@@ -217,6 +217,7 @@ trainloader = DataLoader(trainset, batch_size=trial.params['batch_size'], shuffl
 testloader = DataLoader(testset, batch_size=trial.params['batch_size'], shuffle=False)
 optimizer = optim.Adam(net.parameters(), lr=trial.params['lr'])
 train_accs = train_losses = test_accs = test_losses = []
+# TODO: try use tqdm library for progress bar
 for epoch in range(trial.params['epochs']):
     train_loss, train_acc = fit(net,trainloader, optimizer)
     train_losses.append(train_loss)
