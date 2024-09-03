@@ -4,6 +4,7 @@ import cv2
 from PIL import Image
 import optuna
 from optuna.trial import TrialState
+from tqdm.notebook import tqdm
 import torch
 from torch import nn, optim
 import torch.nn.functional as F
@@ -11,13 +12,14 @@ import torchvision
 from torchvision import transforms
 from torch.utils.data import DataLoader, random_split, Subset
 from torchinfo import summary
+from torch.utils.tensorboard import SummaryWriter
 from sklearn.model_selection import StratifiedKFold
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 #%%
 path = 'data/images'
-pixels_per_side = 220
+pixels_per_side = 100
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 #%%
 print("Using device: ", device)
@@ -108,20 +110,21 @@ trainset, testset = random_split(dataset, [0.85, 0.15])
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
-        self.conv1 = nn.Conv2d(3, 6, 5)
+        self.conv1 = nn.Conv2d(3, 16, 5)
         self.pool = nn.MaxPool2d(2)
-        self.conv2 = nn.Conv2d(6, 16, 5)
-        self.conv3 = nn.Conv2d(16, 120, 5)
+        self.conv2 = nn.Conv2d(16, 64, 5)
+        self.conv3 = nn.Conv2d(64, 120, 5)
         self.flat = nn.Flatten()
-        self.fc1 = nn.Linear(120 * 48 * 48, 64) # ((220 -4)/2 -4)/2 -4
+        self.fc1 = nn.Linear(120 * 18 * 18, 64) # ((100 -4)/2 -4)/2 -4
         self.fc2 = nn.Linear(64, 10)
 
     def forward(self, x):
-        x = self.pool(nn.functional.relu(self.conv1(x)))
-        x = self.pool(nn.functional.relu(self.conv2(x)))
-        x = nn.functional.relu(self.conv3(x))
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = F.relu(self.conv3(x))
         x = self.flat(x)
-        x = nn.functional.relu(self.fc1(x))
+        x = F.relu(self.fc1(x))
+        x = F.dropout(x, p=0.5)
         x = self.fc2(x)
         return x
 #%%
@@ -156,6 +159,7 @@ def predict(net, valloader, loss_fn=nn.CrossEntropyLoss()):
             acc += (pred == labels).sum()
     return total_loss.item() / count, acc.item() / count
 
+
 def objective(trial, trainset, X, y):
     lr = trial.suggest_float('lr', 0.001, 0.1, log=True)
     batch_size = trial.suggest_categorical('batch_size', [64, 128, 256])
@@ -167,23 +171,26 @@ def objective(trial, trainset, X, y):
     val_accs = []
     train_acc, train_loss, val_acc, val_loss, mean_acc = 0, 0, 0, 0, 0
     split_num = 0
-    for train_index, val_index in skf.split(X, y):
+    prog_bar = tqdm(skf.split(X, y), desc="Splits")
+    for train_index, val_index in prog_bar:
         split_num += 1
         train_data = Subset(trainset, train_index)
         val_data = Subset(trainset, val_index)
         trainloader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
         valloader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
-        # TODO: try use tqdm library for progress bar
+
         for epoch in range(epochs):
             train_loss, train_acc = fit(net, trainloader, optimizer)
             val_loss, val_acc = predict(net, valloader)
+            prog_bar.set_description(
+                f"Split {split_num} - Epoch {epoch + 1}, Train acc={train_acc:.3f}, Train loss={train_loss:.3f},"
+                f"Test acc={test_acc:.3f}, Test loss={test_loss:.3f}")
 
         val_accs.append(val_acc)
         mean_acc = np.mean(val_accs)
         trial.report(mean_acc, split_num)
         if trial.should_prune():
             raise optuna.exceptions.TrialPruned()
-    print(f"Train acc={train_acc:.3f}, Val acc={val_acc:.3f}, Train loss={train_loss:.3f}, Val loss={val_loss:.3f}")
     return mean_acc
 #%%
 X = np.zeros(len(trainset))
@@ -210,34 +217,41 @@ print("  Params: ")
 for key, value in trial.params.items():
     print("    {}: {}".format(key, value))
 #%%
+writer = SummaryWriter()
 net = Net().to(device)
+writer.add_graph(net, torch.zeros((1, 3, pixels_per_side, pixels_per_side)).to(device))
+writer.close()
 summary(net, input_size=(1, 3, pixels_per_side, pixels_per_side))
 #%%
 trainloader = DataLoader(trainset, batch_size=trial.params['batch_size'], shuffle=True)
 testloader = DataLoader(testset, batch_size=trial.params['batch_size'], shuffle=False)
 optimizer = optim.Adam(net.parameters(), lr=trial.params['lr'])
-train_accs = train_losses = test_accs = test_losses = []
-# TODO: try use tqdm library for progress bar
-for epoch in range(trial.params['epochs']):
+train_accs, train_losses, test_accs, test_losses = [], [], [], []
+prog_bar = tqdm(range(trial.params['epochs']), total=trial.params['epochs'], desc="Epochs")
+for epoch in prog_bar:
     train_loss, train_acc = fit(net,trainloader, optimizer)
     train_losses.append(train_loss)
     train_accs.append(train_acc)
     test_loss, test_acc = predict(net, testloader)
     test_losses.append(test_loss)
     test_accs.append(test_acc)
-    print(f"Epoch {epoch + 1}, Train acc={train_acc:.3f}, Train loss={train_loss:.3f}, Test acc={test_acc:.3f},"
-          f"Test loss={test_loss:.3f}")
+    prog_bar.set_description(f"Epoch {epoch + 1}, Train acc={train_acc:.3f}, Train loss={train_loss:.3f},"
+                             f"Test acc={test_acc:.3f}, Test loss={test_loss:.3f}")
 #%% evaluate the model
-plt.plot(train_losses, label='Train loss')
-plt.plot(test_losses, label='Test loss')
-plt.xlabel('Epoch')
-plt.ylabel('Loss')
-plt.legend()
-plt.show()
-
+plt.figure()
 plt.plot(train_accs, label='Train acc')
 plt.plot(test_accs, label='Test acc')
 plt.xlabel('Epoch')
 plt.ylabel('Accuracy')
+plt.ylim(0, 1)
+plt.legend()
+plt.show()
+
+plt.figure()
+plt.plot(train_losses, label='Train loss')
+plt.plot(test_losses, label='Test loss')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.ylim(bottom=0)
 plt.legend()
 plt.show()
