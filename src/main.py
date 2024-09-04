@@ -68,6 +68,33 @@ mean = np.mean(data_scaled, axis=(0, 1, 2))
 std = np.std(data_scaled, axis=(0, 1, 2))
 print(mean)
 print(std)
+#%% Data augmentation
+# TODO: fix data augmentation portion
+class_counts = Counter(labels)
+target_count = 100
+samples_needed = {cls: target_count - count for cls, count in class_counts.items()}
+aug_data, aug_labels = [], []
+
+transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomRotation(10),
+    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
+])
+#%%
+print(len(data), len(labels))
+print(type(data), type(labels))
+print(type(data[0]), type(labels[0]))
+print(data[0].shape)
+#%%
+for img, label in zip(data, labels):
+    if samples_needed[label] > 0: # all classes have more than target_count/2 samples so this method is safe
+        synt_img = transform(img)
+        aug_data.append(synt_img.permute(1, 2, 0).numpy())
+        aug_labels.append(label)
+        samples_needed[label] -= 1
+data = np.concatenate([data, aug_data], axis=0)
+labels = np.concatenate([labels, aug_labels], axis=0)
 #%%
 class MyDataset(torch.utils.data.Dataset):
     def __init__(self, data, labels, transform=None):
@@ -84,39 +111,12 @@ class MyDataset(torch.utils.data.Dataset):
             data = self.transform(data)
         labels = torch.tensor(self.labels[idx])
         return data, labels
-#%% Data augmentation
-# TODO: fix data augmentation portion
-class_counts = Counter(labels)
-target_count = 100
-samples_needed = {cls: target_count - count for cls, count in class_counts.items()}
-aug_data, aug_labels = [], []
-
+#%%
 transform = transforms.Compose([
-    transforms.RandomHorizontalFlip(),
-    transforms.RandomRotation(10),
-    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
-])
-#%%
-print(len(data), len(labels))
-print(type(data), type(labels))
-print(type(data[0]), type(labels[0]))
-print(data[0].shape)
-#%%
-for img, label in zip(data, labels):
-    if samples_needed[label] > 0:
-        for _ in range(samples_needed[label]):
-            augmented_img = transform(img)
-            aug_data.append(augmented_img)
-            aug_labels.append(label)
-        samples_needed[label] = 0  # Reset to 0 after reaching the target
-data.extend(aug_data)
-labels.extend(aug_labels)
-#%%
-trans = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize(mean=mean, std=std)
 ])
-dataset = MyDataset(data, labels, transform=trans)
+dataset = MyDataset(data, labels, transform=transform)
 trainset, testset = random_split(dataset, [0.9, 0.1])
 #%%
 class Net(nn.Module):
