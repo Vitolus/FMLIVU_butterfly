@@ -2,6 +2,7 @@
 import os
 import cv2
 from PIL import Image
+from collections import Counter
 import optuna
 from optuna.trial import TrialState
 from tqdm.notebook import tqdm
@@ -33,7 +34,7 @@ for file in folder:
     img = cv2.resize(img, (pixels_per_side, pixels_per_side))
     data.append(img)
     labels.append(int(file[:3]) - 1)
-labels = np.array(labels)
+# labels = np.array(labels)
 classes = ['Danaus plexippus', 'Heliconius charitonius', 'Heliconius erato', 'Junonia coenia', 'Lycaena phlaeas',
            'Nymphalis antiopa', 'Papilio cresphontes', 'Pieris rapae', 'Vanessa atalanta', 'Vanessa cardui']
 print([classes[labels[i]] for i in range(10)])
@@ -75,23 +76,19 @@ class MyDataset(torch.utils.data.Dataset):
         labels = torch.tensor(self.labels[idx])
         return data, labels
 #%%
-trans = transforms.Compose([
-    transforms.ToTensor()
-])
-dataset = MyDataset(data, labels, transform=trans)
+dataset = MyDataset(data, labels, transform=transforms.ToTensor())
 dataloader = DataLoader(dataset, batch_size=64, shuffle=False)
 total_sum = torch.zeros(3)
+total_squared_sum = torch.zeros(3)
 total_count = 0
 for images, _ in dataloader:
     total_sum += images.sum(dim=[0, 2, 3])
+    total_squared_sum += (images ** 2).sum(dim=[0, 2, 3])
     total_count += images.numel() / images.shape[1]
 mean = total_sum / total_count
-sum_of_squared_diff = torch.zeros(3)
-for images, _ in dataloader:
-    sum_of_squared_diff += ((images - mean.unsqueeze(1).unsqueeze(2))**2).sum(dim=[0, 2, 3])
-std = torch.sqrt(sum_of_squared_diff / total_count)
-mean = [mean[0].item(), mean[1].item(), mean[2].item()]
-std = [std[0].item(), std[1].item(), std[2].item()]
+std = torch.sqrt((total_squared_sum / total_sum) - (mean ** 2))
+mean = mean.tolist()
+std = std.tolist()
 print(mean, std)
 #%% Data cleaning
 data = np.array(data)
@@ -105,17 +102,17 @@ trans = transforms.Compose([
     transforms.Normalize(mean=mean, std=std)
 ])
 dataset = MyDataset(data, labels, transform=trans)
-trainset, testset = random_split(dataset, [0.85, 0.15])
+trainset, testset = random_split(dataset, [0.9, 0.1])
 #%%
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
-        self.conv1 = nn.Conv2d(3, 16, 5)
+        self.conv1 = nn.Conv2d(3, 10, 5)
         self.pool = nn.MaxPool2d(2)
-        self.conv2 = nn.Conv2d(16, 64, 5)
-        self.conv3 = nn.Conv2d(64, 120, 5)
+        self.conv2 = nn.Conv2d(10, 25, 5)
+        self.conv3 = nn.Conv2d(25, 16, 5)
         self.flat = nn.Flatten()
-        self.fc1 = nn.Linear(120 * 18 * 18, 64) # ((100 -4)/2 -4)/2 -4
+        self.fc1 = nn.Linear(16 * 18 * 18, 64) # ((100 -4)/2 -4)/2 -4
         self.fc2 = nn.Linear(64, 10)
 
     def forward(self, x):
@@ -159,11 +156,10 @@ def predict(net, valloader, loss_fn=nn.CrossEntropyLoss()):
             acc += (pred == labels).sum()
     return total_loss.item() / count, acc.item() / count
 
-
 def objective(trial, trainset, X, y):
     lr = trial.suggest_float('lr', 0.001, 0.1, log=True)
     batch_size = trial.suggest_categorical('batch_size', [64, 128, 256])
-    epochs = trial.suggest_int('epochs', 20, 60)
+    epochs = trial.suggest_int('epochs', 30, 80)
     net = Net().to(device)
     optimizer = optim.Adam(net.parameters(), lr=lr)
 
@@ -183,8 +179,8 @@ def objective(trial, trainset, X, y):
             train_loss, train_acc = fit(net, trainloader, optimizer)
             val_loss, val_acc = predict(net, valloader)
             prog_bar.set_description(
-                f"Split {split_num} - Epoch {epoch + 1}, Train acc={train_acc:.3f}, Train loss={train_loss:.3f},"
-                f"Test acc={test_acc:.3f}, Test loss={test_loss:.3f}")
+                f"Split {split_num} - Epoch {epoch + 1}, Train acc={train_acc:.3f}, Train loss={train_loss:.3f}, "
+                f"Test acc={val_acc:.3f}, Test loss={val_loss:.3f}")
 
         val_accs.append(val_acc)
         mean_acc = np.mean(val_accs)
@@ -200,7 +196,7 @@ for _, label in labelloader:
     y.append(label.numpy())
 y = np.concatenate(y, axis=0)
 study = optuna.create_study(direction='maximize', pruner=optuna.pruners.MedianPruner())
-study.optimize(lambda trial: objective(trial, trainset, X, y), n_trials=6)
+study.optimize(lambda trial: objective(trial, trainset, X, y), n_trials=10)
 #%%
 pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
 complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
@@ -217,17 +213,17 @@ print("  Params: ")
 for key, value in trial.params.items():
     print("    {}: {}".format(key, value))
 #%%
-writer = SummaryWriter()
+writer = SummaryWriter("runs")
 net = Net().to(device)
 writer.add_graph(net, torch.zeros((1, 3, pixels_per_side, pixels_per_side)).to(device))
-writer.close()
+writer.flush()
 summary(net, input_size=(1, 3, pixels_per_side, pixels_per_side))
 #%%
 trainloader = DataLoader(trainset, batch_size=trial.params['batch_size'], shuffle=True)
 testloader = DataLoader(testset, batch_size=trial.params['batch_size'], shuffle=False)
 optimizer = optim.Adam(net.parameters(), lr=trial.params['lr'])
 train_accs, train_losses, test_accs, test_losses = [], [], [], []
-prog_bar = tqdm(range(trial.params['epochs']), total=trial.params['epochs'], desc="Epochs")
+prog_bar = tqdm(range(trial.params['epochs']), total=trial.params['epochs'])
 for epoch in prog_bar:
     train_loss, train_acc = fit(net,trainloader, optimizer)
     train_losses.append(train_loss)
@@ -235,9 +231,18 @@ for epoch in prog_bar:
     test_loss, test_acc = predict(net, testloader)
     test_losses.append(test_loss)
     test_accs.append(test_acc)
-    prog_bar.set_description(f"Epoch {epoch + 1}, Train acc={train_acc:.3f}, Train loss={train_loss:.3f},"
+    prog_bar.set_description(f"Epoch {epoch + 1}, Train acc={train_acc:.3f}, Train loss={train_loss:.3f}, "
                              f"Test acc={test_acc:.3f}, Test loss={test_loss:.3f}")
 #%% evaluate the model
+train_accs = np.array(train_accs)
+train_losses = np.array(train_losses)
+test_accs = np.array(test_accs)
+test_losses = np.array(test_losses)
+print(train_losses.shape, test_losses.shape)
+print(train_losses, test_losses)
+print(train_accs.shape, test_accs.shape)
+print(train_accs, test_accs)
+#%%
 plt.figure()
 plt.plot(train_accs, label='Train acc')
 plt.plot(test_accs, label='Test acc')
