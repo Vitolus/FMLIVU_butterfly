@@ -75,7 +75,6 @@ samples_needed = {cls: target_count - count for cls, count in class_counts.items
 aug_data, aug_labels = [], []
 
 transform = transforms.Compose([
-    transforms.ToTensor(),
     transforms.RandomHorizontalFlip(),
     transforms.RandomRotation(10),
     transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
@@ -89,7 +88,7 @@ print(data[0].shape)
 for img, label in zip(data, labels):
     if samples_needed[label] > 0: # all classes have more than target_count/2 samples so this method is safe
         synt_img = transform(img)
-        aug_data.append(synt_img.permute(1, 2, 0).numpy())
+        aug_data.append(synt_img)
         aug_labels.append(label)
         samples_needed[label] -= 1
 data = np.concatenate([data, aug_data], axis=0)
@@ -117,27 +116,6 @@ transform = transforms.Compose([
 ])
 dataset = MyDataset(data, labels, transform=transform)
 trainset, testset = random_split(dataset, [0.9, 0.1])
-#%%
-class Net(nn.Module):
-    def __init__(self):
-        super(Net, self).__init__()
-        self.conv1 = nn.Conv2d(3, 10, 5)
-        self.pool = nn.MaxPool2d(2)
-        self.conv2 = nn.Conv2d(10, 25, 5)
-        self.conv3 = nn.Conv2d(25, 16, 5)
-        self.flat = nn.Flatten()
-        self.fc1 = nn.Linear(16 * 18 * 18, 64) # ((100 -4)/2 -4)/2 -4
-        self.fc2 = nn.Linear(64, 10)
-
-    def forward(self, x):
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
-        x = F.relu(self.conv3(x))
-        x = self.flat(x)
-        x = F.relu(self.fc1(x))
-        x = F.dropout(x, p=0.5)
-        x = self.fc2(x)
-        return x
 #%%
 def fit(net, trainloader, optimizer, loss_fn=nn.CrossEntropyLoss()):
     net.train()
@@ -202,6 +180,27 @@ def objective(trial, trainset, X, y):
         if trial.should_prune():
             raise optuna.exceptions.TrialPruned()
     return mean_acc
+#%% CNN definition
+class Net(nn.Module):
+    def __init__(self):
+        super(Net, self).__init__()
+        self.conv1 = nn.Conv2d(3, 10, 5)
+        self.pool = nn.MaxPool2d(2)
+        self.conv2 = nn.Conv2d(10, 25, 5)
+        self.conv3 = nn.Conv2d(25, 16, 5)
+        self.flat = nn.Flatten()
+        self.fc1 = nn.Linear(16 * 18 * 18, 64) # ((100 -4)/2 -4)/2 -4
+        self.fc2 = nn.Linear(64, 10)
+
+    def forward(self, x):
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = F.relu(self.conv3(x))
+        x = self.flat(x)
+        x = F.relu(self.fc1(x))
+        x = F.dropout(x, p=0.5)
+        x = self.fc2(x)
+        return x
 #%%
 X = np.zeros(len(trainset))
 labelloader =  DataLoader(trainset, batch_size=128, shuffle=False)
