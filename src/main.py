@@ -69,7 +69,6 @@ std = np.std(data_scaled, axis=(0, 1, 2))
 print(mean)
 print(std)
 #%% Data augmentation
-# TODO: fix data augmentation portion
 class_counts = Counter(labels)
 target_count = 100
 samples_needed = {cls: target_count - count for cls, count in class_counts.items()}
