@@ -22,7 +22,6 @@ import matplotlib.pyplot as plt
 path = 'data/images'
 pixels_per_side = 100
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-#%%
 print("Using device: ", device)
 #%%
 data = []
@@ -34,9 +33,11 @@ for file in folder:
     img = cv2.resize(img, (pixels_per_side, pixels_per_side))
     data.append(img)
     labels.append(int(file[:3]) - 1)
-# labels = np.array(labels)
+data = np.array(data)
+labels = np.array(labels)
 classes = ['Danaus plexippus', 'Heliconius charitonius', 'Heliconius erato', 'Junonia coenia', 'Lycaena phlaeas',
            'Nymphalis antiopa', 'Papilio cresphontes', 'Pieris rapae', 'Vanessa atalanta', 'Vanessa cardui']
+print(data.shape, labels.shape)
 print([classes[labels[i]] for i in range(10)])
 #%%
 fig,ax=plt.subplots(5,2)
@@ -48,6 +49,7 @@ for i in range(5):
         ax[i,j].set_title(str(classes[labels[l]]))
 plt.axis('off')
 plt.tight_layout()
+plt.show()
 #%%
 df = pd.DataFrame(labels, columns=['labels'])
 df['labels'] = [classes[i] for i in df['labels']]
@@ -58,6 +60,14 @@ plt.xlabel('Species')
 plt.ylabel('Counts')
 plt.xticks(rotation=45, ha='right')
 plt.show()
+#%%
+data_min = np.min(data, axis=(0, 1, 2), keepdims=True)
+data_max = np.max(data, axis=(0, 1, 2), keepdims=True)
+data_scaled = (data - data_min) / (data_max - data_min)
+mean = np.mean(data_scaled, axis=(0, 1, 2))
+std = np.std(data_scaled, axis=(0, 1, 2))
+print(mean)
+print(std)
 #%%
 class MyDataset(torch.utils.data.Dataset):
     def __init__(self, data, labels, transform=None):
@@ -70,32 +80,37 @@ class MyDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         data = self.data[idx]
-        data = Image.fromarray(data, mode='RGB')
         if self.transform:
             data = self.transform(data)
         labels = torch.tensor(self.labels[idx])
         return data, labels
+#%% Data augmentation
+# TODO: fix data augmentation portion
+class_counts = Counter(labels)
+target_count = 100
+samples_needed = {cls: target_count - count for cls, count in class_counts.items()}
+aug_data, aug_labels = [], []
+
+transform = transforms.Compose([
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomRotation(10),
+    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
+])
 #%%
-dataset = MyDataset(data, labels, transform=transforms.ToTensor())
-dataloader = DataLoader(dataset, batch_size=64, shuffle=False)
-total_sum = torch.zeros(3)
-total_squared_sum = torch.zeros(3)
-total_count = 0
-for images, _ in dataloader:
-    total_sum += images.sum(dim=[0, 2, 3])
-    total_squared_sum += (images ** 2).sum(dim=[0, 2, 3])
-    total_count += images.numel() / images.shape[1]
-mean = total_sum / total_count
-std = torch.sqrt((total_squared_sum / total_sum) - (mean ** 2))
-mean = mean.tolist()
-std = std.tolist()
-print(mean, std)
-#%% Data cleaning
-data = np.array(data)
-labels = np.array(labels)
-print(data.shape, labels.shape)
-print(data)
-print(labels)
+print(len(data), len(labels))
+print(type(data), type(labels))
+print(type(data[0]), type(labels[0]))
+print(data[0].shape)
+#%%
+for img, label in zip(data, labels):
+    if samples_needed[label] > 0:
+        for _ in range(samples_needed[label]):
+            augmented_img = transform(img)
+            aug_data.append(augmented_img)
+            aug_labels.append(label)
+        samples_needed[label] = 0  # Reset to 0 after reaching the target
+data.extend(aug_data)
+labels.extend(aug_labels)
 #%%
 trans = transforms.Compose([
     transforms.ToTensor(),
