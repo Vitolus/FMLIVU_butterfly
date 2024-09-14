@@ -150,8 +150,6 @@ def predict(net, valloader, loss_fn=nn.CrossEntropyLoss()):
 
 def objective(trial, trainset, X, y):
     lr = trial.suggest_float('lr', 0.0009, 0.9, log=True)
-    batch_size = trial.suggest_categorical('batch_size', [128, 256])
-    epochs = 100
     net = Net().to(device)
     optimizer = optim.Adam(net.parameters(), lr=lr)
 
@@ -164,15 +162,15 @@ def objective(trial, trainset, X, y):
         split_num += 1
         train_data = Subset(trainset, train_index)
         val_data = Subset(trainset, val_index)
-        trainloader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
-        valloader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
+        trainloader = DataLoader(train_data, batch_size=128, shuffle=True)
+        valloader = DataLoader(val_data, batch_size=64, shuffle=False)
 
-        for epoch in range(epochs):
+        for epoch in range(100):
             train_loss, train_acc = fit(net, trainloader, optimizer)
             val_loss, val_acc = predict(net, valloader)
             prog_bar.set_description(
                 f"Split {split_num} - Epoch {epoch + 1}, Train acc={train_acc:.3f}, Train loss={train_loss:.3f}, "
-                f"Test acc={val_acc:.3f}, Test loss={val_loss:.3f}")
+                f"Validation acc={val_acc:.3f}, Validation loss={val_loss:.3f}")
 
         val_accs.append(val_acc)
         mean_acc = np.mean(val_accs)
@@ -203,7 +201,7 @@ class Net(nn.Module):
         return x
 #%%
 X = np.zeros(len(trainset))
-labelloader =  DataLoader(trainset, batch_size=128, shuffle=False)
+labelloader =  DataLoader(trainset, batch_size=256, shuffle=False)
 y = []
 for _, label in labelloader:
     y.append(label.numpy())
@@ -232,11 +230,11 @@ writer.add_graph(net, torch.zeros((1, 3, pixels_per_side, pixels_per_side)).to(d
 writer.flush()
 summary(net, input_size=(1, 3, pixels_per_side, pixels_per_side))
 #%%
-trainloader = DataLoader(trainset, batch_size=trial.params['batch_size'], shuffle=True)
-testloader = DataLoader(testset, batch_size=trial.params['batch_size'], shuffle=False)
+trainloader = DataLoader(trainset, batch_size=128, shuffle=True)
+testloader = DataLoader(testset, batch_size=64, shuffle=False)
 optimizer = optim.Adam(net.parameters(), lr=trial.params['lr'])
 train_accs, train_losses, test_accs, test_losses = [], [], [], []
-prog_bar = tqdm(range(trial.params['epochs']), total=trial.params['epochs'])
+prog_bar = tqdm(range(100), total=100)
 for epoch in prog_bar:
     train_loss, train_acc = fit(net,trainloader, optimizer)
     train_losses.append(train_loss)
