@@ -128,11 +128,11 @@ def fit(net, trainloader, optimizer, loss_fn=nn.CrossEntropyLoss()):
         loss = loss_fn(out, labels)
         loss.backward()
         optimizer.step()
-        total_loss += loss
+        total_loss += loss.item()
         _, predicted = torch.max(out, 1)
-        acc += (predicted == labels).sum()
+        acc += (predicted == labels).sum().item()
         count += len(labels)
-    return total_loss.item() / count, acc.item() / count
+    return total_loss / count, acc / count
 
 def predict(net, valloader, loss_fn=nn.CrossEntropyLoss()):
     net.eval()
@@ -143,15 +143,15 @@ def predict(net, valloader, loss_fn=nn.CrossEntropyLoss()):
             labels = labels.to(device)
             count += len(labels)
             out = net(features)
-            total_loss += loss_fn(out, labels)
+            total_loss += loss_fn(out, labels).item()
             pred = torch.max(out, 1)[1]
-            acc += (pred == labels).sum()
-    return total_loss.item() / count, acc.item() / count
+            acc += (pred == labels).sum().item()
+    return total_loss / count, acc / count
 
 def objective(trial, trainset, X, y):
-    lr = trial.suggest_float('lr', 0.001, 0.1, log=True)
-    batch_size = trial.suggest_categorical('batch_size', [64, 128, 256])
-    epochs = trial.suggest_int('epochs', 30, 80)
+    lr = trial.suggest_float('lr', 0.0009, 0.9, log=True)
+    batch_size = trial.suggest_categorical('batch_size', [128, 256])
+    epochs = 100
     net = Net().to(device)
     optimizer = optim.Adam(net.parameters(), lr=lr)
 
