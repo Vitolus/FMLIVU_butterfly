@@ -14,7 +14,7 @@ from torchvision import transforms
 from torch.utils.data import DataLoader, random_split, SubsetRandomSampler
 from torchinfo import summary
 from torch.utils.tensorboard import SummaryWriter
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, train_test_split
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -68,31 +68,6 @@ mean = np.mean(data_scaled, axis=(0, 1, 2))
 std = np.std(data_scaled, axis=(0, 1, 2))
 print(mean)
 print(std)
-#%% Data augmentation
-class_counts = Counter(labels)
-target_count = 100
-samples_needed = {cls: target_count - count for cls, count in class_counts.items()}
-aug_data, aug_labels = [], []
-
-transform = transforms.Compose([
-    transforms.RandomHorizontalFlip(),
-    transforms.RandomRotation(10),
-    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
-])
-#%%
-print(len(data), len(labels))
-print(type(data), type(labels))
-print(type(data[0]), type(labels[0]))
-print(data[0].shape)
-#%%
-for img, label in zip(data, labels):
-    if samples_needed[label] > 0: # all classes have more than target_count/2 samples so this method is safe
-        synt_img = transform(img)
-        aug_data.append(synt_img)
-        aug_labels.append(label)
-        samples_needed[label] -= 1
-data = np.concatenate([data, aug_data], axis=0)
-labels = np.concatenate([labels, aug_labels], axis=0)
 #%%
 class MyDataset(torch.utils.data.Dataset):
     def __init__(self, data, labels, transform=None):
@@ -109,13 +84,40 @@ class MyDataset(torch.utils.data.Dataset):
             data = self.transform(data)
         labels = torch.tensor(self.labels[idx])
         return data, labels
+#%% Data augmentation
+class_counts = Counter(labels)
+target_count = 100
+samples_needed = {cls: target_count - count for cls, count in class_counts.items()}
+aug_data, aug_labels = [], []
+
+transform = transforms.Compose([
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomRotation(360),
+    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
+])
+#%%
+print(len(data), len(labels))
+print(type(data), type(labels))
+print(type(data[0]), type(labels[0]))
+print(data[0].shape)
+#%%
+X_train, X_test, y_train, y_test = train_test_split(data, labels, test_size=0.2, stratify=labels)
+for img, label in zip(X_train, y_train):
+    if samples_needed[label] > 0: # all classes have more than target_count/2 samples so this method is safe
+        img = Image.fromarray(img)
+        img = transform(img)
+        aug_data.append(img)
+        aug_labels.append(label)
+        samples_needed[label] -= 1
+X_train = np.concatenate([X_train, aug_data], axis=0)
+y_train = np.concatenate([y_train, aug_labels], axis=0)
 #%%
 transform = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize(mean=mean, std=std)
 ])
-dataset = MyDataset(data, labels, transform=transform)
-trainset, testset = random_split(dataset, [0.8, 0.2])
+trainset = MyDataset(X_train, y_train, transform=transform)
+testset = MyDataset(X_test, y_test, transform=transform)
 #%%
 class EarlyStopping:
     def __init__(self, patience=5, delta=0.0, window_size=5):
@@ -182,7 +184,7 @@ def predict(net, valloader, loss_fn=nn.CrossEntropyLoss()):
     return total_loss / count, acc / count
 
 def objective(trial, trainset, X, y):
-    lr = trial.suggest_float('lr', 0.0009, 0.9, log=True)
+    lr = trial.suggest_float('lr', 0.0009, 0.009, log=True)
     batch_size = trial.suggest_categorical('batch_size', [64, 128, 256])
 
     skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=1)
@@ -197,7 +199,7 @@ def objective(trial, trainset, X, y):
         net = Net().to(device)
         optimizer = optim.Adam(net.parameters(), lr=lr)
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=5)
-        early_stopping = EarlyStopping(patience=10, window_size=5)
+        early_stopping = EarlyStopping(patience=10, delta=0.005, window_size=5)
 
         for epoch in range(100):
             train_loss, train_acc = fit(net, trainloader, optimizer)
@@ -271,7 +273,7 @@ trainloader = DataLoader(trainset, batch_size=trial.params['batch_size'], shuffl
 testloader = DataLoader(testset, batch_size=256, shuffle=False)
 optimizer = optim.Adam(net.parameters(), lr=trial.params['lr'])
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=5)
-early_stopping = EarlyStopping(patience=10, window_size=5)
+early_stopping = EarlyStopping(patience=10, delta=0.005, window_size=5)
 train_accs, train_losses, test_accs, test_losses = [], [], [], []
 prog_bar = tqdm(range(100), total=100)
 for epoch in prog_bar:
