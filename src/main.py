@@ -184,7 +184,7 @@ def predict(net, valloader, loss_fn=nn.CrossEntropyLoss()):
     return total_loss / count, acc / count
 
 def objective(trial, trainset, X, y):
-    lr = trial.suggest_float('lr', 0.0009, 0.009, log=True)
+    lr = trial.suggest_float('lr', 0.0009, 0.002, log=True)
     batch_size = trial.suggest_categorical('batch_size', [64, 128, 256])
 
     skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=1)
