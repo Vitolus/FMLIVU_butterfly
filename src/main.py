@@ -11,7 +11,7 @@ from torch import nn, optim
 import torch.nn.functional as F
 import torchvision
 from torchvision import transforms
-from torch.utils.data import DataLoader, random_split, Subset
+from torch.utils.data import DataLoader, random_split, SubsetRandomSampler
 from torchinfo import summary
 from torch.utils.tensorboard import SummaryWriter
 from sklearn.model_selection import StratifiedKFold
@@ -115,7 +115,40 @@ transform = transforms.Compose([
     transforms.Normalize(mean=mean, std=std)
 ])
 dataset = MyDataset(data, labels, transform=transform)
-trainset, testset = random_split(dataset, [0.9, 0.1])
+trainset, testset = random_split(dataset, [0.8, 0.2])
+#%%
+class EarlyStopping:
+    def __init__(self, patience=5, delta=0.0, window_size=5):
+        self.patience = patience
+        self.counter = 0
+        self.best_score = None
+        self.early_stop = False
+        self.val_max = -np.Inf
+        self.delta = delta
+        self.window_size = window_size
+        self.val_window = []
+
+    def __call__(self, val_acc, net):
+        self.val_window.append(val_acc)
+        if len(self.val_window) > self.window_size:
+            self.val_window.pop(0)
+        avg_val = np.mean(self.val_window)
+        score = avg_val
+        if self.best_score is None:
+            self.best_score = score
+            self.save_checkpoint(avg_val, net)
+        elif score < self.best_score - self.delta:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_score = score
+            self.save_checkpoint(avg_val, net)
+            self.counter = 0
+
+    def save_checkpoint(self, val, model):
+        torch.save(model.state_dict(), 'checkpoint.pth')
+        self.val_max = val
 #%%
 def fit(net, trainloader, optimizer, loss_fn=nn.CrossEntropyLoss()):
     net.train()
@@ -150,8 +183,7 @@ def predict(net, valloader, loss_fn=nn.CrossEntropyLoss()):
 
 def objective(trial, trainset, X, y):
     lr = trial.suggest_float('lr', 0.0009, 0.9, log=True)
-    net = Net().to(device)
-    optimizer = optim.Adam(net.parameters(), lr=lr)
+    batch_size = trial.suggest_categorical('batch_size', [64, 128, 256])
 
     skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=1)
     val_accs = []
@@ -160,17 +192,23 @@ def objective(trial, trainset, X, y):
     prog_bar = tqdm(skf.split(X, y), desc="Splits")
     for train_index, val_index in prog_bar:
         split_num += 1
-        train_data = Subset(trainset, train_index)
-        val_data = Subset(trainset, val_index)
-        trainloader = DataLoader(train_data, batch_size=128, shuffle=True)
-        valloader = DataLoader(val_data, batch_size=64, shuffle=False)
+        trainloader = DataLoader(trainset, batch_size=batch_size, sampler=SubsetRandomSampler(train_index))
+        valloader = DataLoader(trainset, batch_size=256, sampler=SubsetRandomSampler(val_index))
+        net = Net().to(device)
+        optimizer = optim.Adam(net.parameters(), lr=lr)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=5)
+        early_stopping = EarlyStopping(patience=10, window_size=5)
 
         for epoch in range(100):
             train_loss, train_acc = fit(net, trainloader, optimizer)
             val_loss, val_acc = predict(net, valloader)
+            scheduler.step(val_acc)
+            early_stopping(val_acc, net)
             prog_bar.set_description(
                 f"Split {split_num} - Epoch {epoch + 1}, Train acc={train_acc:.3f}, Train loss={train_loss:.3f}, "
                 f"Validation acc={val_acc:.3f}, Validation loss={val_loss:.3f}")
+            if early_stopping.early_stop:
+                break
 
         val_accs.append(val_acc)
         mean_acc = np.mean(val_accs)
@@ -195,8 +233,7 @@ class Net(nn.Module):
         x = self.pool(F.relu(self.conv2(x)))
         x = F.relu(self.conv3(x))
         x = self.flat(x)
-        x = F.relu(self.fc1(x))
-        x = F.dropout(x, p=0.5)
+        x = F.dropout(F.relu(self.fc1(x)), p=0.5)
         x = self.fc2(x)
         return x
 #%%
@@ -230,9 +267,11 @@ writer.add_graph(net, torch.zeros((1, 3, pixels_per_side, pixels_per_side)).to(d
 writer.flush()
 summary(net, input_size=(1, 3, pixels_per_side, pixels_per_side))
 #%%
-trainloader = DataLoader(trainset, batch_size=128, shuffle=True)
-testloader = DataLoader(testset, batch_size=64, shuffle=False)
+trainloader = DataLoader(trainset, batch_size=trial.params['batch_size'], shuffle=True)
+testloader = DataLoader(testset, batch_size=256, shuffle=False)
 optimizer = optim.Adam(net.parameters(), lr=trial.params['lr'])
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=5)
+early_stopping = EarlyStopping(patience=10, window_size=5)
 train_accs, train_losses, test_accs, test_losses = [], [], [], []
 prog_bar = tqdm(range(100), total=100)
 for epoch in prog_bar:
@@ -242,8 +281,13 @@ for epoch in prog_bar:
     test_loss, test_acc = predict(net, testloader)
     test_losses.append(test_loss)
     test_accs.append(test_acc)
+    scheduler.step(test_acc)
+    early_stopping(test_acc, net)
     prog_bar.set_description(f"Epoch {epoch + 1}, Train acc={train_acc:.3f}, Train loss={train_loss:.3f}, "
                              f"Test acc={test_acc:.3f}, Test loss={test_loss:.3f}")
+    if early_stopping.early_stop:
+        print("Early stopping")
+        break
 #%% evaluate the model
 train_accs = np.array(train_accs)
 train_losses = np.array(train_losses)
