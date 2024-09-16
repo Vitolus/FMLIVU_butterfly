@@ -152,7 +152,7 @@ class EarlyStopping:
             self.counter = 0
 
     def save_checkpoint(self, val, model):
-        torch.save(model.state_dict(), 'checkpoint.pth')
+        torch.save(model.state_dict(), '../models/checkpoint.pth')
         self.val_max = val
 #%%
 def fit(net, trainloader, optimizer, loss_fn=nn.CrossEntropyLoss()):
