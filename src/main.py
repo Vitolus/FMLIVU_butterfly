@@ -1,6 +1,7 @@
 #%% import libraries
 import os
 import cv2
+import random
 from PIL import Image
 from collections import Counter
 import optuna
@@ -102,8 +103,10 @@ print(type(data[0]), type(labels[0]))
 print(data[0].shape)
 #%%
 X_train, X_test, y_train, y_test = train_test_split(data, labels, test_size=0.2, stratify=labels)
-for img, label in zip(X_train, y_train):
-    if samples_needed[label] > 0: # all classes have more than target_count/2 samples so this method is safe
+while any(samples_needed[cls] > 0 for cls in samples_needed):
+    idx = random.randint(0, len(X_train) - 1)
+    img, label = X_train[idx], y_train[idx]
+    if samples_needed[label] > 0:
         img = Image.fromarray(img)
         img = transform(img)
         aug_data.append(img)
@@ -187,7 +190,7 @@ def objective(trial, trainset, X, y):
     lr = trial.suggest_float('lr', 0.0009, 0.002, log=True)
     batch_size = trial.suggest_categorical('batch_size', [64, 128, 256])
 
-    skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=1)
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=1)
     val_accs = []
     train_acc, train_loss, val_acc, val_loss, mean_acc = 0, 0, 0, 0, 0
     split_num = 0
