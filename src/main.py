@@ -62,11 +62,11 @@ plt.ylabel('Counts')
 plt.xticks(rotation=45, ha='right')
 plt.show()
 #%%
-data_min = np.min(data, axis=(0, 1, 2), keepdims=True)
-data_max = np.max(data, axis=(0, 1, 2), keepdims=True)
-data_scaled = (data - data_min) / (data_max - data_min)
-mean = np.mean(data_scaled, axis=(0, 1, 2))
-std = np.std(data_scaled, axis=(0, 1, 2))
+data_min = np.min(data, axis=(0, 1, 2), keepdims=True) # data_min contains the minimum value of each channel
+data_max = np.max(data, axis=(0, 1, 2), keepdims=True) # data_max contains the maximum value of each channel
+data_scaled = (data - data_min) / (data_max - data_min) # data_scaled contains the scaled data between 0 and 1
+mean = np.mean(data_scaled, axis=(0, 1, 2)) # mean contains the mean of each channel
+std = np.std(data_scaled, axis=(0, 1, 2)) # std contains the standard deviation of each channel
 print(mean)
 print(std)
 #%%
