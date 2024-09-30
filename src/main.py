@@ -123,37 +123,31 @@ trainset = MyDataset(X_train, y_train, transform=transform)
 testset = MyDataset(X_test, y_test, transform=transform)
 #%%
 class EarlyStopping:
-    def __init__(self, patience=5, delta=0.0, window_size=5):
+    def __init__(self, patience=10, delta=0.05, window_size=5):
         self.patience = patience
         self.counter = 0
-        self.best_score = None
+        self.best_score = np.Inf
         self.early_stop = False
-        self.val_max = -np.Inf
         self.delta = delta
         self.window_size = window_size
         self.val_window = []
 
-    def __call__(self, val_acc, net):
-        self.val_window.append(val_acc)
+    def __call__(self, val_loss, net):
+        self.val_window.append(val_loss)
         if len(self.val_window) > self.window_size:
             self.val_window.pop(0)
         avg_val = np.mean(self.val_window)
-        score = avg_val
-        if self.best_score is None:
-            self.best_score = score
-            self.save_checkpoint(avg_val, net)
-        elif score < self.best_score - self.delta:
+
+        if avg_val == self.best_score or avg_val > self.best_score + self.delta:
             self.counter += 1
-            if self.counter >= self.patience:
-                self.early_stop = True
-        else:
-            self.best_score = score
+        elif avg_val < self.best_score:
+            self.best_score = avg_val
             self.save_checkpoint(avg_val, net)
-            self.counter = 0
+        if self.counter >= self.patience:
+            self.early_stop = True
 
     def save_checkpoint(self, val, model):
         torch.save(model.state_dict(), '../models/checkpoint.pth')
-        self.val_max = val
 #%%
 def fit(net, trainloader, optimizer, loss_fn=nn.CrossEntropyLoss()):
     net.train()
